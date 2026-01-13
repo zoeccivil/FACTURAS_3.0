@@ -4914,3 +4914,406 @@ class LogicControllerFirebase:
             import traceback
             traceback. print_exc()
             return []
+
+    def reverse_journal_entry(
+        self,
+        entry_id: str,
+        reversal_date,
+        reason: str
+    ) -> tuple[bool, str]:
+        """
+        Anula un asiento contable creando un asiento inverso.
+        
+        Args:
+            entry_id: ID del asiento a anular
+            reversal_date: Fecha del asiento de anulación
+            reason: Motivo de la anulación
+            
+        Returns:
+            (success, message) tuple
+        """
+        if not self._db:
+            return False, "Base de datos no inicializada."
+
+        try:
+            from google.cloud.firestore_v1.base_query import FieldFilter
+            
+            # Buscar el asiento original
+            query = self._db.collection("journal_entries").where(
+                filter=FieldFilter("entry_id", "==", entry_id)
+            ).limit(1)
+            
+            docs = list(query.stream())
+            if not docs:
+                return False, f"Asiento {entry_id} no encontrado."
+            
+            original_entry = docs[0].to_dict()
+            
+            # Verificar que no esté ya anulado
+            if original_entry.get("reversed_by"):
+                return False, f"El asiento {entry_id} ya fue anulado."
+            
+            # Crear líneas inversas (intercambiar débito y crédito)
+            reversed_lines = []
+            for line in original_entry.get("lines", []):
+                reversed_lines.append({
+                    "account_id": line["account_id"],
+                    "account_name": line["account_name"],
+                    "debit": line["credit"],  # Invertir
+                    "credit": line["debit"],   # Invertir
+                    "description": f"Anulación: {line.get('description', '')}"
+                })
+            
+            # Crear asiento de anulación
+            success, msg = self.create_journal_entry(
+                company_id=original_entry["company_id"],
+                entry_date=reversal_date,
+                reference=f"REV-{original_entry.get('reference', '')}",
+                description=f"ANULACIÓN: {reason}",
+                lines=reversed_lines,
+                source_type="REVERSAL",
+                source_id=entry_id
+            )
+            
+            if not success:
+                return False, f"Error al crear asiento de anulación: {msg}"
+            
+            # Marcar el asiento original como anulado
+            docs[0].reference.update({
+                "reversed_by": reason,
+                "reversal_date": reversal_date,
+                "status": "REVERSED"
+            })
+            
+            return True, f"Asiento {entry_id} anulado correctamente."
+
+        except Exception as e:
+            print(f"[REVERSE_ENTRY] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return False, f"Error al anular asiento: {e}"
+
+    def get_general_ledger(
+        self,
+        company_id,
+        account_id: str,
+        start_date,
+        end_date
+    ) -> list[dict]:
+        """
+        Obtiene el libro mayor (movimientos) de una cuenta específica.
+        
+        Args:
+            company_id: ID de la empresa
+            account_id: Código de la cuenta (ej: "1.1.1.001")
+            start_date: Fecha inicial
+            end_date: Fecha final
+            
+        Returns:
+            Lista de movimientos con débito, crédito y saldo
+        """
+        if not self._db:
+            return []
+
+        try:
+            from google.cloud.firestore_v1.base_query import FieldFilter
+            
+            normalized_id = self._normalize_company_id(company_id)
+            
+            # Convertir fechas a datetime
+            if isinstance(start_date, str):
+                start_date = datetime.datetime.strptime(start_date, "%Y-%m-%d")
+            elif isinstance(start_date, datetime.date) and not isinstance(start_date, datetime.datetime):
+                start_date = datetime.datetime.combine(start_date, datetime.time())
+            
+            if isinstance(end_date, str):
+                end_date = datetime.datetime.strptime(end_date, "%Y-%m-%d")
+            elif isinstance(end_date, datetime.date) and not isinstance(end_date, datetime.datetime):
+                end_date = datetime.datetime.combine(end_date, datetime.time(23, 59, 59))
+            
+            # Obtener asientos en el rango de fechas
+            query = (
+                self._db.collection("journal_entries")
+                .where(filter=FieldFilter("company_id", "==", normalized_id))
+                .where(filter=FieldFilter("entry_date", ">=", start_date))
+                .where(filter=FieldFilter("entry_date", "<=", end_date))
+                .order_by("entry_date")
+            )
+            
+            docs = query.stream()
+            
+            # Filtrar líneas que correspondan a esta cuenta
+            movements = []
+            for doc in docs:
+                entry_data = doc.to_dict()
+                
+                # Buscar líneas de esta cuenta
+                for line in entry_data.get("lines", []):
+                    if line.get("account_id") == account_id:
+                        movements.append({
+                            "date": entry_data["entry_date"],
+                            "entry_id": entry_data["entry_id"],
+                            "reference": entry_data.get("reference", ""),
+                            "description": line.get("description", entry_data.get("description", "")),
+                            "debit": line.get("debit", 0.0),
+                            "credit": line.get("credit", 0.0),
+                            "status": entry_data.get("status", ""),
+                        })
+            
+            print(f"[GENERAL_LEDGER] {len(movements)} movimientos para cuenta {account_id}")
+            
+            return movements
+
+        except Exception as e:
+            print(f"[GENERAL_LEDGER] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+    def calculate_income_statement(
+        self,
+        company_id,
+        year: int,
+        month: int
+    ) -> dict:
+        """
+        Calcula el Estado de Resultados (P&L) para un periodo.
+        
+        Returns:
+            {
+                'ingresos_operacionales': float,
+                'costo_ventas': float,
+                'utilidad_bruta': float,
+                'gastos_operacionales': float,
+                'gastos_financieros': float,
+                'otros_ingresos': float,
+                'otros_gastos': float,
+                'utilidad_neta': float
+            }
+        """
+        if not self._db:
+            return {}
+
+        try:
+            from google.cloud.firestore_v1.base_query import FieldFilter
+            
+            normalized_id = self._normalize_company_id(company_id)
+            
+            # Obtener saldos del periodo
+            period = f"{year}-{month:02d}"
+            query = (
+                self._db.collection("account_balances")
+                .where(filter=FieldFilter("company_id", "==", normalized_id))
+                .where(filter=FieldFilter("period", "==", period))
+            )
+            
+            docs = query.stream()
+            
+            # Obtener plan de cuentas para clasificar
+            accounts = self.get_chart_of_accounts(company_id)
+            accounts_dict = {acc["account_code"]: acc for acc in accounts}
+            
+            # Inicializar totales
+            ingresos_operacionales = 0.0
+            costo_ventas = 0.0
+            gastos_operacionales = 0.0
+            gastos_financieros = 0.0
+            otros_ingresos = 0.0
+            otros_gastos = 0.0
+            
+            # Sumar saldos por categoría
+            for doc in docs:
+                balance_data = doc.to_dict()
+                account_id = balance_data.get("account_id", "")
+                
+                # Obtener info de la cuenta
+                account = accounts_dict.get(account_id, {})
+                account_type = account.get("account_type", "")
+                category = account.get("category", "")
+                
+                # Calcular movimiento neto del periodo
+                total_debit = balance_data.get("total_debit", 0.0)
+                total_credit = balance_data.get("total_credit", 0.0)
+                net_movement = total_credit - total_debit  # Para cuentas de ingreso
+                
+                if account_type == "INGRESO":
+                    if "OPERACIONAL" in category or "VENTA" in category or "SERVICIO" in category:
+                        ingresos_operacionales += net_movement
+                    else:
+                        otros_ingresos += net_movement
+                
+                elif account_type == "GASTO":
+                    net_movement_gasto = total_debit - total_credit  # Para gastos
+                    
+                    if "COSTO" in category or "VENTA" in category.upper():
+                        costo_ventas += net_movement_gasto
+                    elif "FINANCIERO" in category or "INTERES" in category:
+                        gastos_financieros += net_movement_gasto
+                    elif "OPERACIONAL" in category or "ADMINISTRATIVO" in category or "VENTA" in category:
+                        gastos_operacionales += net_movement_gasto
+                    else:
+                        otros_gastos += net_movement_gasto
+            
+            # Calcular utilidades
+            utilidad_bruta = ingresos_operacionales - costo_ventas
+            utilidad_operacional = utilidad_bruta - gastos_operacionales
+            utilidad_antes_impuestos = utilidad_operacional - gastos_financieros + otros_ingresos - otros_gastos
+            utilidad_neta = utilidad_antes_impuestos  # Sin impuestos por ahora
+            
+            result = {
+                'ingresos_operacionales': round(ingresos_operacionales, 2),
+                'costo_ventas': round(costo_ventas, 2),
+                'utilidad_bruta': round(utilidad_bruta, 2),
+                'gastos_operacionales': round(gastos_operacionales, 2),
+                'gastos_financieros': round(gastos_financieros, 2),
+                'otros_ingresos': round(otros_ingresos, 2),
+                'otros_gastos': round(otros_gastos, 2),
+                'utilidad_operacional': round(utilidad_operacional, 2),
+                'utilidad_antes_impuestos': round(utilidad_antes_impuestos, 2),
+                'utilidad_neta': round(utilidad_neta, 2)
+            }
+            
+            print(f"[INCOME_STATEMENT] Calculado para {period}: Utilidad Neta = {utilidad_neta:,.2f}")
+            
+            return result
+
+        except Exception as e:
+            print(f"[INCOME_STATEMENT] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return {}
+
+    def get_balance_sheet_for_optimizer(
+        self,
+        company_id,
+        year: int,
+        month: int
+    ) -> dict:
+        """
+        Exporta balance contable al optimizador financiero.
+        
+        Returns:
+            {
+                'has_real_data': bool,
+                'current_assets': float,
+                'non_current_assets': float,
+                'current_liabilities': float,
+                'non_current_liabilities': float,
+                'equity': float,
+                'revenue': float,
+                'cogs': float,
+                'operating_expenses': float,
+                'financial_expenses': float,
+                'net_income': float,
+                'ebit': float,
+                'cash': float,
+                'accounts_receivable': float,
+                'inventory': float,
+                'accounts_payable': float
+            }
+        """
+        if not self._db:
+            return {'has_real_data': False}
+
+        try:
+            from google.cloud.firestore_v1.base_query import FieldFilter
+            
+            normalized_id = self._normalize_company_id(company_id)
+            
+            # Obtener saldos del periodo
+            period = f"{year}-{month:02d}"
+            query = (
+                self._db.collection("account_balances")
+                .where(filter=FieldFilter("company_id", "==", normalized_id))
+                .where(filter=FieldFilter("period", "==", period))
+            )
+            
+            docs = list(query.stream())
+            
+            if not docs:
+                return {'has_real_data': False}
+            
+            # Obtener plan de cuentas
+            accounts = self.get_chart_of_accounts(company_id)
+            accounts_dict = {acc["account_code"]: acc for acc in accounts}
+            
+            # Inicializar categorías
+            current_assets = 0.0
+            non_current_assets = 0.0
+            current_liabilities = 0.0
+            non_current_liabilities = 0.0
+            equity = 0.0
+            cash = 0.0
+            accounts_receivable = 0.0
+            inventory = 0.0
+            accounts_payable = 0.0
+            
+            # Clasificar saldos
+            for doc in docs:
+                balance_data = doc.to_dict()
+                account_id = balance_data.get("account_id", "")
+                closing_balance = balance_data.get("closing_balance", 0.0)
+                
+                account = accounts_dict.get(account_id, {})
+                account_type = account.get("account_type", "")
+                category = account.get("category", "")
+                
+                if account_type == "ACTIVO":
+                    if "CORRIENTE" in category or category in ["EFECTIVO", "CUENTAS_COBRAR", "INVENTARIO"]:
+                        current_assets += closing_balance
+                        
+                        # Detalles
+                        if category == "EFECTIVO":
+                            cash += closing_balance
+                        elif category == "CUENTAS_COBRAR":
+                            accounts_receivable += closing_balance
+                        elif category == "INVENTARIO":
+                            inventory += closing_balance
+                    else:
+                        non_current_assets += closing_balance
+                
+                elif account_type == "PASIVO":
+                    if "CORRIENTE" in category or category == "CUENTAS_PAGAR":
+                        current_liabilities += abs(closing_balance)
+                        
+                        if category == "CUENTAS_PAGAR":
+                            accounts_payable += abs(closing_balance)
+                    else:
+                        non_current_liabilities += abs(closing_balance)
+                
+                elif account_type == "PATRIMONIO":
+                    equity += abs(closing_balance)
+            
+            # Obtener datos del estado de resultados
+            income_statement = self.calculate_income_statement(company_id, year, month)
+            
+            result = {
+                'has_real_data': True,
+                'current_assets': round(current_assets, 2),
+                'non_current_assets': round(non_current_assets, 2),
+                'current_liabilities': round(current_liabilities, 2),
+                'non_current_liabilities': round(non_current_liabilities, 2),
+                'equity': round(equity, 2),
+                'revenue': income_statement.get('ingresos_operacionales', 0.0),
+                'cogs': income_statement.get('costo_ventas', 0.0),
+                'operating_expenses': income_statement.get('gastos_operacionales', 0.0),
+                'financial_expenses': income_statement.get('gastos_financieros', 0.0),
+                'net_income': income_statement.get('utilidad_neta', 0.0),
+                'ebit': income_statement.get('utilidad_operacional', 0.0),
+                'cash': round(cash, 2),
+                'accounts_receivable': round(accounts_receivable, 2),
+                'inventory': round(inventory, 2),
+                'accounts_payable': round(accounts_payable, 2),
+                'total_assets': round(current_assets + non_current_assets, 2),
+                'total_liabilities': round(current_liabilities + non_current_liabilities, 2),
+            }
+            
+            print(f"[BALANCE_SHEET_OPTIMIZER] Datos exportados para {period}")
+            
+            return result
+
+        except Exception as e:
+            print(f"[BALANCE_SHEET_OPTIMIZER] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'has_real_data': False}
