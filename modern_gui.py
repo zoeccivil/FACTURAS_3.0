@@ -580,6 +580,10 @@ class ModernMainWindow(QMainWindow):
         self._add_nav_button(
             sidebar_layout, "fa5s.chart-area", "Utilidades", "profit_summary"
         )
+        # ✅ NUEVO: Botón de Optimizador Financiero
+        self._add_nav_button(
+            sidebar_layout, "fa5s.bullseye", "Optimizador\nFinanciero", "optimizer"
+        )
         # ✅ NUEVO:  Botón de Contabilidad
         self._add_nav_button(
             sidebar_layout, "fa5s.book", "Contabilidad", "accounting"
@@ -874,6 +878,9 @@ class ModernMainWindow(QMainWindow):
         elif key == "profit_summary":
             self.open_profit_summary_window()
 
+        # ✅ NUEVO: Caso para Optimizador Financiero
+        elif key == "optimizer":
+            self.open_financial_optimizer()
 
         # ✅ NUEVO:  Caso para Contabilidad
         elif key == "accounting":
@@ -2367,6 +2374,38 @@ class ModernMainWindow(QMainWindow):
                 "Error",
                 f"Error al abrir gestor de asientos:\n{e}"
             )
+            import traceback
+            traceback.print_exc()
+
+    def open_financial_optimizer(self):
+        """Abre el optimizador financiero."""
+        try:
+            company_id = self.get_current_company_id()
+            company_name = self.company_selector.currentText()
+            
+            if not company_id:
+                QMessageBox.warning(self, "Sin Empresa", "Selecciona una empresa primero.")
+                return
+            
+            from optimization_scenarios_window import OptimizationScenariosWindow
+            from PyQt6.QtCore import QDate
+            
+            current_date = QDate.currentDate()
+            month_str = f"{current_date.month():02d}"
+            year_int = current_date.year()
+            
+            dlg = OptimizationScenariosWindow(
+                parent=self,
+                controller=self.controller,
+                company_id=company_id,
+                company_name=company_name,
+                month_str=month_str,
+                year_int=year_int,
+            )
+            dlg.exec()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo abrir el optimizador:\n{e}")
             import traceback
             traceback.print_exc()
 
