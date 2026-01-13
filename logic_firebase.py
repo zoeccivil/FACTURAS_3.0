@@ -4866,6 +4866,315 @@ class LogicControllerFirebase:
 
 
 
+    # ========================================================================
+    # OPTIMIZADOR FINANCIERO
+    # ========================================================================
+
+    def get_financial_state(
+        self,
+        company_id,
+        month_str: str,
+        year_int: int
+    ) -> dict:
+        """
+        Obtiene el estado financiero completo para un periodo.
+        
+        Returns:
+            {
+                'current_assets': float,
+                'non_current_assets': float,
+                'current_liabilities': float,
+                'non_current_liabilities': float,
+                'equity': float,
+                'revenue': float,
+                'cogs': float,
+                'operating_expenses': float,
+                'financial_expenses': float,
+                'net_income': float,
+                'ebit': float,
+                'cash': float,
+                'accounts_receivable': float,
+                'inventory': float,
+                'accounts_payable': float
+            }
+        """
+        if not self._db or not company_id:
+            return {}
+
+        try:
+            # Obtener resumen de utilidades (ya tenemos este método)
+            profit_summary = self.get_profit_summary(company_id, month_str, year_int)
+            
+            # Obtener balances de cuentas (necesitamos implementar balance general)
+            # Por ahora, estimamos desde facturas
+            
+            total_income = float(profit_summary.get("total_income", 0.0))
+            total_expense = float(profit_summary.get("total_expense", 0.0))
+            additional_expenses = float(profit_summary.get("additional_expenses", 0.0))
+            net_profit = float(profit_summary.get("net_profit", 0.0))
+            
+            # ESTIMACIONES (reemplazar cuando tengamos balance general completo)
+            # Estas son aproximaciones basadas en ratios típicos
+            
+            # Activos Corrientes (asumiendo 30% de ingresos anualizados)
+            annual_revenue = total_income * (12 if month_str else 1)
+            current_assets = annual_revenue * 0.30
+            
+            # Efectivo (10% de activos corrientes)
+            cash = current_assets * 0.10
+            
+            # Cuentas por Cobrar (40% de activos corrientes, ~45 días de ventas)
+            accounts_receivable = (total_income / 30) * 45 if month_str else total_income * 0.15
+            
+            # Inventario (si aplica, 20% de activos corrientes)
+            inventory = current_assets * 0.20
+            
+            # Activos No Corrientes (estimado en 2x activos corrientes)
+            non_current_assets = current_assets * 2.0
+            
+            # Pasivos Corrientes (30% de activos corrientes)
+            current_liabilities = current_assets * 0.30
+            
+            # Cuentas por Pagar (60% de pasivos corrientes)
+            accounts_payable = current_liabilities * 0.60
+            
+            # Pasivos No Corrientes (préstamos LP, estimado)
+            non_current_liabilities = (current_assets + non_current_assets) * 0.25
+            
+            # Patrimonio (Activos - Pasivos)
+            total_assets = current_assets + non_current_assets
+            total_liabilities = current_liabilities + non_current_liabilities
+            equity = total_assets - total_liabilities
+            
+            # P&L
+            # COGS estimado (40% de ingresos)
+            cogs = total_income * 0.40
+            
+            # Gastos operativos (gastos de facturas + adicionales)
+            operating_expenses = total_expense + additional_expenses
+            
+            # Gastos financieros (estimado 5% de pasivos totales anualizados)
+            financial_expenses = total_liabilities * 0.05 / 12
+            
+            # EBIT = Ingresos - COGS - Gastos Operativos
+            ebit = total_income - cogs - operating_expenses
+            
+            return {
+                'current_assets': current_assets,
+                'non_current_assets': non_current_assets,
+                'current_liabilities': current_liabilities,
+                'non_current_liabilities': non_current_liabilities,
+                'equity': equity,
+                'revenue': total_income,
+                'cogs': cogs,
+                'operating_expenses': operating_expenses,
+                'financial_expenses': financial_expenses,
+                'net_income': net_profit,
+                'ebit': ebit,
+                'cash': cash,
+                'accounts_receivable': accounts_receivable,
+                'inventory': inventory,
+                'accounts_payable': accounts_payable
+            }
+
+        except Exception as e:
+            print(f"[FINANCIAL_STATE] Error: {e}")
+            return {}
+
+    def save_financial_targets(
+        self,
+        company_id,
+        period: str,
+        targets: dict,
+        constraints: dict
+    ) -> tuple:
+        """
+        Guarda ratios objetivo y restricciones.
+        
+        Args:
+            period: "2025-Q1", "2025-03", etc.
+            targets: {'roa': 0.12, 'roe': 0.15, ...}
+            constraints: {'min_current_ratio': 1.5, ...}
+        """
+        if not self._db:
+            return False, "Base de datos no inicializada."
+
+        try:
+            normalized_id = self._normalize_company_id(company_id)
+            target_id = f"{normalized_id}_{period.replace('-', '_')}"
+            
+            doc_ref = self._db.collection("financial_targets").document(target_id)
+            
+            doc_ref.set({
+                "target_id": target_id,
+                "company_id": normalized_id,
+                "period": period,
+                "targets": targets,
+                "constraints": constraints,
+                "created_at": self._get_timestamp(),
+                "updated_at": self._get_timestamp(),
+            })
+            
+            return True, f"Objetivos guardados para {period}."
+
+        except Exception as e:
+            print(f"[SAVE_TARGETS] Error: {e}")
+            return False, f"Error al guardar objetivos: {e}"
+
+    def get_financial_targets(
+        self,
+        company_id,
+        period: str
+    ) -> dict:
+        """
+        Obtiene ratios objetivo para un periodo.
+        
+        Returns:
+            {
+                'targets': {...},
+                'constraints': {...}
+            }
+        """
+        if not self._db:
+            return {}
+
+        try:
+            normalized_id = self._normalize_company_id(company_id)
+            target_id = f"{normalized_id}_{period.replace('-', '_')}"
+            
+            doc = self._db.collection("financial_targets").document(target_id).get()
+            
+            if doc.exists:
+                data = doc.to_dict()
+                return {
+                    'targets': data.get('targets', {}),
+                    'constraints': data.get('constraints', {})
+                }
+            else:
+                # Devolver valores por defecto
+                return {
+                    'targets': {
+                        'roa': 0.12,
+                        'roe': 0.15,
+                        'current_ratio': 2.0,
+                        'debt_ratio': 0.40,
+                        'net_margin': 0.10
+                    },
+                    'constraints': {
+                        'min_current_ratio': 1.5,
+                        'max_debt_ratio': 0.60,
+                        'min_cash_balance': 100000
+                    }
+                }
+
+        except Exception as e:
+            print(f"[GET_TARGETS] Error: {e}")
+            return {}
+
+    def save_optimization_scenario(
+        self,
+        company_id,
+        scenario_data: dict
+    ) -> tuple:
+        """
+        Guarda un escenario de optimización generado.
+        
+        Args:
+            scenario_data: Diccionario completo del escenario
+        """
+        if not self._db:
+            return False, "Base de datos no inicializada."
+
+        try:
+            import datetime
+            normalized_id = self._normalize_company_id(company_id)
+            
+            # Generar ID único
+            timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            scenario_id = f"{normalized_id}_{timestamp_str}_scenario"
+            
+            scenario_data['scenario_id'] = scenario_id
+            scenario_data['company_id'] = normalized_id
+            scenario_data['date_created'] = self._get_timestamp()
+            scenario_data['status'] = "DRAFT"
+            
+            self._db.collection("optimization_scenarios").document(scenario_id).set(scenario_data)
+            
+            return True, f"Escenario guardado: {scenario_id}"
+
+        except Exception as e:
+            print(f"[SAVE_SCENARIO] Error: {e}")
+            return False, f"Error al guardar escenario: {e}"
+
+    def get_optimization_scenarios(
+        self,
+        company_id,
+        limit: int = 10
+    ) -> list:
+        """
+        Obtiene escenarios guardados para una empresa.
+        """
+        if not self._db:
+            return []
+
+        try:
+            from google.cloud.firestore_v1.base_query import FieldFilter
+            normalized_id = self._normalize_company_id(company_id)
+            
+            docs = (
+                self._db.collection("optimization_scenarios")
+                .where(filter=FieldFilter("company_id", "==", normalized_id))
+                .order_by("date_created", direction=firestore.Query.DESCENDING)
+                .limit(limit)
+                .stream()
+            )
+            
+            scenarios = []
+            for doc in docs:
+                data = doc.to_dict()
+                data['id'] = doc.id
+                scenarios.append(data)
+            
+            return scenarios
+
+        except Exception as e:
+            print(f"[GET_SCENARIOS] Error: {e}")
+            return []
+
+    def update_scenario_status(
+        self,
+        scenario_id: str,
+        status: str,
+        notes: str = ""
+    ) -> tuple:
+        """
+        Actualiza el estado de un escenario.
+        
+        Args:
+            status: "DRAFT", "APPROVED", "IN_PROGRESS", "COMPLETED"
+        """
+        if not self._db:
+            return False, "Base de datos no inicializada."
+
+        try:
+            doc_ref = self._db.collection("optimization_scenarios").document(scenario_id)
+            
+            update_data = {
+                "status": status,
+                "updated_at": self._get_timestamp(),
+            }
+            
+            if notes:
+                update_data["notes"] = notes
+            
+            doc_ref.update(update_data)
+            
+            return True, f"Estado actualizado a {status}."
+
+        except Exception as e:
+            print(f"[UPDATE_STATUS] Error: {e}")
+            return False, f"Error al actualizar estado: {e}"
+
     def get_journal_entries(
         self,
         company_id,
