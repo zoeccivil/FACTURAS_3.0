@@ -5137,19 +5137,21 @@ class LogicControllerFirebase:
                 net_movement = total_credit - total_debit  # Para cuentas de ingreso
                 
                 if account_type == "INGRESO":
-                    if "OPERACIONAL" in category or "VENTA" in category or "SERVICIO" in category:
+                    category_upper = category.upper()
+                    if "OPERACIONAL" in category_upper or "VENTA" in category_upper or "SERVICIO" in category_upper:
                         ingresos_operacionales += net_movement
                     else:
                         otros_ingresos += net_movement
                 
                 elif account_type == "GASTO":
                     net_movement_gasto = total_debit - total_credit  # Para gastos
+                    category_upper = category.upper()
                     
-                    if "COSTO" in category or "VENTA" in category.upper():
+                    if "COSTO" in category_upper or "VENTA" in category_upper:
                         costo_ventas += net_movement_gasto
-                    elif "FINANCIERO" in category or "INTERES" in category:
+                    elif "FINANCIERO" in category_upper or "INTERES" in category_upper:
                         gastos_financieros += net_movement_gasto
-                    elif "OPERACIONAL" in category or "ADMINISTRATIVO" in category or "VENTA" in category:
+                    elif "OPERACIONAL" in category_upper or "ADMINISTRATIVO" in category_upper:
                         gastos_operacionales += net_movement_gasto
                     else:
                         otros_gastos += net_movement_gasto
@@ -5256,9 +5258,10 @@ class LogicControllerFirebase:
                 
                 account = accounts_dict.get(account_id, {})
                 account_type = account.get("account_type", "")
-                category = account.get("category", "")
+                category = account.get("category", "").upper()
                 
                 if account_type == "ACTIVO":
+                    # Consistent approach: check for substring or exact match
                     if "CORRIENTE" in category or category in ["EFECTIVO", "CUENTAS_COBRAR", "INVENTARIO"]:
                         current_assets += closing_balance
                         
@@ -5273,6 +5276,7 @@ class LogicControllerFirebase:
                         non_current_assets += closing_balance
                 
                 elif account_type == "PASIVO":
+                    # Consistent approach: check for substring or exact match
                     if "CORRIENTE" in category or category == "CUENTAS_PAGAR":
                         current_liabilities += abs(closing_balance)
                         

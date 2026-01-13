@@ -109,12 +109,16 @@ class AccountingReportsPDF:
             total_pasivos = balance_data.get('pasivos', {}).get('total', 0)
             total_patrimonio = balance_data.get('patrimonio', {}).get('total', 0)
             
+            # Calculate difference with sign to show direction of imbalance
+            difference = total_activos - (total_pasivos + total_patrimonio)
+            verification_label = "Cuadrado ✓" if abs(difference) < 0.01 else "Diferencia"
+            
             verification_data = [
                 ['Total Activos:', f'RD$ {total_activos:,.2f}'],
                 ['Total Pasivos:', f'RD$ {total_pasivos:,.2f}'],
                 ['Total Patrimonio:', f'RD$ {total_patrimonio:,.2f}'],
                 ['', ''],
-                ['Verificación:', f'RD$ {abs(total_activos - (total_pasivos + total_patrimonio)):,.2f}']
+                [f'{verification_label}:', f'RD$ {difference:,.2f}']
             ]
             
             verification_table = Table(verification_data, colWidths=[4*inch, 2*inch])
