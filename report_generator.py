@@ -200,51 +200,77 @@ class ModernPDF(FPDF):
         if self.page_no() == 1:
             # Logo placeholder (cuadrado oscuro)
             self.set_fill_color_rgb(COLORS['slate_900'])
-            self.rounded_rect(15, 12, 10, 10, 2, 'F')
+            self.rounded_rect(15, 10, 10, 10, 2, 'F')
             
             # Calcular ancho disponible para textos (mitad de página cada uno)
             page_width = self.w - 30  # Total width minus margins
-            left_width = page_width * 0.55  # 55% for left side
-            right_width = page_width * 0.45  # 45% for right side
+            left_width = page_width * 0.50  # 50% for left side
+            right_width = page_width * 0.50  # 50% for right side
             
             # Título App (lado izquierdo)
-            self.set_xy(28, 12)
-            self.set_font('Arial', 'B', 14)
+            self.set_xy(28, 10)
+            self.set_font('Arial', 'B', 13)
             self.set_text_color_rgb(COLORS['slate_900'])
-            self.cell(left_width, 6, "Gestión Facturas PRO", 0, 0, 'L')
+            # Truncar título de app si es muy largo
+            app_title = "Gestión Facturas PRO"
+            if self.get_string_width(app_title) > left_width - 10:
+                app_title = "Facturas PRO"
+            self.cell(left_width - 10, 6, app_title, 0, 0, 'L')
             
             # Bloque Derecho - Empieza desde la posición calculada
-            right_start_x = 28 + left_width + 5
+            right_start_x = 15 + left_width + 10
             
             # Label "EMPRESA / PERIODO"
-            self.set_xy(right_start_x, 12)
-            self.set_font('Arial', 'B', 8)
+            self.set_xy(right_start_x, 10)
+            self.set_font('Arial', 'B', 7)
             self.set_text_color_rgb(COLORS['slate_400'])
-            self.cell(right_width, 4, "EMPRESA / PERIODO", 0, 1, 'R')
+            self.cell(right_width - 10, 3, "EMPRESA / PERIODO", 0, 1, 'R')
             
             # Subtítulo Reporte (lado izquierdo)
-            self.set_xy(28, 19)
-            self.set_font('Arial', '', 10)
-            self.set_text_color_rgb(COLORS['slate_500'])
-            self.cell(left_width, 5, self.report_title[:45], 0, 0, 'L')
-            
-            # Nombre Empresa (lado derecho)
-            self.set_xy(right_start_x, 17)
-            self.set_font('Arial', 'B', 10)
-            self.set_text_color_rgb(COLORS['slate_800'])
-            self.cell(right_width, 5, self.company_name[:35], 0, 1, 'R')
-            
-            # Periodo (lado derecho)
-            self.set_xy(right_start_x, 23)
+            self.set_xy(28, 17)
             self.set_font('Arial', '', 9)
             self.set_text_color_rgb(COLORS['slate_500'])
-            self.cell(right_width, 5, self.report_period, 0, 1, 'R')
+            # Truncar reporte title dinámicamente
+            report_display = self.report_title
+            max_report_width = left_width - 10
+            if self.get_string_width(report_display) > max_report_width:
+                # Truncar hasta que quepa
+                while len(report_display) > 10 and self.get_string_width(report_display + "...") > max_report_width:
+                    report_display = report_display[:-1]
+                report_display = report_display + "..."
+            self.cell(left_width - 10, 4, report_display, 0, 0, 'L')
             
-            # Línea separadora
-            self.set_y(30)
+            # Nombre Empresa (lado derecho)
+            self.set_xy(right_start_x, 14)
+            self.set_font('Arial', 'B', 9)
+            self.set_text_color_rgb(COLORS['slate_800'])
+            # Truncar nombre empresa dinámicamente
+            company_display = self.company_name
+            max_company_width = right_width - 10
+            if self.get_string_width(company_display) > max_company_width:
+                while len(company_display) > 10 and self.get_string_width(company_display + "...") > max_company_width:
+                    company_display = company_display[:-1]
+                company_display = company_display + "..."
+            self.cell(right_width - 10, 4, company_display, 0, 1, 'R')
+            
+            # Periodo (lado derecho)
+            self.set_xy(right_start_x, 19)
+            self.set_font('Arial', '', 8)
+            self.set_text_color_rgb(COLORS['slate_500'])
+            # Truncar periodo si es muy largo
+            period_display = self.report_period
+            max_period_width = right_width - 10
+            if self.get_string_width(period_display) > max_period_width:
+                while len(period_display) > 10 and self.get_string_width(period_display + "...") > max_period_width:
+                    period_display = period_display[:-1]
+                period_display = period_display + "..."
+            self.cell(right_width - 10, 4, period_display, 0, 1, 'R')
+            
+            # Línea separadora - más abajo para dar espacio
+            self.set_y(26)
             self.set_draw_color_rgb(COLORS['slate_200'])
-            self.line(15, 30, self.w - 15, 30)
-            self.ln(6)
+            self.line(15, 26, self.w - 15, 26)
+            self.ln(4)
         else:
             # Header simplificado páginas siguientes
             self.set_font('Arial', 'I', 8)
@@ -1024,15 +1050,35 @@ def generate_tax_calculation_pdf(report_data, output_path):
 
             currency = inv.get("currency") or "RD$"
             rate = float(inv.get("exchange_rate", 1.0) or 1.0)
-            total_orig = float(inv.get("total_amount", 0.0) or 0.0)
-            itbis_orig = float(inv.get("itbis", 0.0) or 0.0)
+            
+            # ✅ CRITICAL FIX: Obtener valores originales correctamente
+            # Si existen campos _original_currency, usarlos. Si no, calcular desde RD$
+            itbis_original = float(inv.get("itbis_original_currency", 0.0) or 0.0)
+            total_original = float(inv.get("total_amount_original_currency", 0.0) or 0.0)
+            
+            # Si no hay valores originales guardados, calcularlos desde RD$
+            if itbis_original == 0.0 and rate > 0:
+                itbis_rd = float(inv.get("itbis_rd") or inv.get("itbis", 0.0) or 0.0)
+                itbis_original = itbis_rd / rate if currency not in ["RD$", "DOP"] else itbis_rd
+            else:
+                itbis_rd = float(inv.get("itbis_rd") or inv.get("itbis", 0.0) or 0.0)
+            
+            if total_original == 0.0 and rate > 0:
+                total_rd = float(inv.get("total_amount_rd") or inv.get("total_amount", 0.0) or 0.0)
+                total_original = total_rd / rate if currency not in ["RD$", "DOP"] else total_rd
+            else:
+                total_rd = float(inv.get("total_amount_rd") or inv.get("total_amount", 0.0) or 0.0)
+            
+            # Ahora trabajar con valores originales (no multiplicar por rate otra vez)
+            total_orig = total_original
+            itbis_orig = itbis_original
 
             valor_retencion_orig = itbis_orig * 0.30 if inv.get("has_retention") else 0.0
             monto_a_pagar_orig = total_orig * (percent_to_pay / 100.0)
             itbis_neto_orig = itbis_orig - valor_retencion_orig
             total_impuestos_row_orig = itbis_neto_orig + monto_a_pagar_orig
 
-            total_rd = float(inv.get("total_amount_rd", 0.0) or (total_orig * rate))
+            # ✅ Usar valores ya convertidos a RD$ (NO multiplicar por rate otra vez)
             total_imp_rd = total_impuestos_row_orig * rate
 
             currency_totals. setdefault(currency, 0.0)
