@@ -3,23 +3,15 @@
 fix_itbis_exchange_rate.py
 
 Script para corregir el ITBIS en facturas con moneda extranjera.
-El problema: El ITBIS no estaba siendo multiplicado por la tasa de cambio,
-quedando en la moneda original en lugar de RD$.
-
-Este script:
-1. Busca todas las facturas con moneda diferente a RD$ o DOP
-2. Verifica que exchange_rate > 1.0
-3. Recalcula itbis_rd = itbis × exchange_rate
-4. Actualiza los campos:
-   - itbis_original_currency (valor original)
-   - itbis_rd (valor convertido)
-   - itbis (campo principal, ahora en RD$)
-   - total_amount_original_currency (para referencia)
+Incluye selector de archivos (FileDialog) para credenciales.
 """
 
 import os
 import sys
+import json
 from typing import Optional
+import tkinter as tk
+from tkinter import filedialog
 
 try:
     import firebase_admin
@@ -30,38 +22,65 @@ except ImportError:
     sys.exit(1)
 
 
+def get_credentials_from_dialog() -> Optional[str]:
+    """Abre un diálogo de sistema para seleccionar el archivo JSON."""
+    print("⚠️ No se encontraron credenciales automáticamente.")
+    print("📂 Abriendo ventana para seleccionar archivo de credenciales...")
+    
+    # Crear una ventana raíz oculta (para que no aparezca una ventana vacía)
+    root = tk.Tk()
+    root.withdraw()
+    
+    # Abrir el explorador de archivos
+    file_path = filedialog.askopenfilename(
+        title="Seleccionar credenciales de Firebase (JSON)",
+        filetypes=[("Archivos JSON", "*.json"), ("Todos los archivos", "*.*")]
+    )
+    
+    root.destroy()
+    return file_path if file_path else None
+
+
 def initialize_firebase(cred_path: Optional[str] = None) -> firestore.Client:
     """Inicializa Firebase con las credenciales."""
+    
+    # 1. Si no viene por argumento, intentar buscar en config.json
     if not cred_path:
-        # Buscar credenciales en config.json
-        import json
         try:
-            with open("facturas_config/config.json", "r", encoding="utf-8") as f:
-                config = json.load(f)
-                cred_path = config.get("firebase_credentials_path")
+            if os.path.exists("facturas_config/config.json"):
+                with open("facturas_config/config.json", "r", encoding="utf-8") as f:
+                    config = json.load(f)
+                    cred_path = config.get("firebase_credentials_path")
         except Exception:
             pass
     
+    # 2. Si aún no tenemos ruta válida, ABRIR FILE DIALOG
     if not cred_path or not os.path.exists(cred_path):
-        print(f"ERROR: No se encontró el archivo de credenciales: {cred_path}")
-        print("Por favor, proporcione la ruta al archivo de credenciales de Firebase.")
+        cred_path = get_credentials_from_dialog()
+
+    # 3. Validación final
+    if not cred_path or not os.path.exists(cred_path):
+        print("\n❌ ERROR CRÍTICO:")
+        print("No se proporcionó un archivo de credenciales válido.")
+        print("El script no puede continuar sin conexión a la base de datos.")
         sys.exit(1)
     
+    print(f"🔑 Usando credenciales: {cred_path}")
+
     # Inicializar Firebase
-    if not firebase_admin._apps:
-        cred = credentials.Certificate(cred_path)
-        firebase_admin.initialize_app(cred)
-    
-    return firestore.client()
+    try:
+        if not firebase_admin._apps:
+            cred = credentials.Certificate(cred_path)
+            firebase_admin.initialize_app(cred)
+        return firestore.client()
+    except Exception as e:
+        print(f"❌ Error al inicializar Firebase con el archivo proporcionado: {e}")
+        sys.exit(1)
 
 
 def fix_invoice_itbis(db: firestore.Client, dry_run: bool = True):
     """
     Corrige el ITBIS en facturas con moneda extranjera.
-    
-    Args:
-        db: Cliente de Firestore
-        dry_run: Si es True, solo muestra qué se haría sin modificar datos
     """
     print("=" * 80)
     print("CORRECCIÓN DE ITBIS EN FACTURAS CON MONEDA EXTRANJERA")
@@ -83,6 +102,7 @@ def fix_invoice_itbis(db: firestore.Client, dry_run: bool = True):
     # Buscar facturas con moneda extranjera
     invoices_ref = db.collection("invoices")
     
+    print("⏳ Descargando facturas...")
     # Obtener todas las facturas
     all_invoices = list(invoices_ref.stream())
     print(f"📊 Total de facturas en base de datos: {len(all_invoices)}")
@@ -105,12 +125,6 @@ def fix_invoice_itbis(db: firestore.Client, dry_run: bool = True):
             third_party = data.get("third_party_name", "Desconocido")
             
             # Verificar si necesita corrección
-            # Solo corregir si:
-            # 1. Moneda no es RD$ o DOP
-            # 2. Exchange rate > 1.0 (indica moneda extranjera)
-            # 3. ITBIS > 0
-            # 4. No tiene ya el campo itbis_rd o es diferente del esperado
-            
             if currency in ["RD$", "DOP", "RD", "DOP$"]:
                 skipped_count += 1
                 continue
@@ -125,7 +139,6 @@ def fix_invoice_itbis(db: firestore.Client, dry_run: bool = True):
             
             # Verificar si ya fue corregido
             itbis_rd_existing = data.get("itbis_rd")
-            itbis_original_existing = data.get("itbis_original_currency")
             
             # Calcular el ITBIS esperado en RD$
             expected_itbis_rd = itbis * exchange_rate
@@ -136,7 +149,6 @@ def fix_invoice_itbis(db: firestore.Client, dry_run: bool = True):
                     skipped_count += 1
                     continue
             
-            # Si el ITBIS ya parece estar en RD$ (muy alto para ser USD), skip
             # Heurística: si itbis > total_amount / 5, probablemente ya está en RD$
             if total_amount > 0 and itbis > (total_amount / 5):
                 skipped_count += 1
@@ -205,12 +217,12 @@ def main():
     parser.add_argument(
         "--cred",
         type=str,
-        help="Ruta al archivo de credenciales de Firebase"
+        help="Ruta al archivo de credenciales de Firebase (opcional)"
     )
     
     args = parser.parse_args()
     
-    # Inicializar Firebase
+    # Inicializar Firebase (si args.cred es None, buscará config o abrirá diálogo)
     try:
         db = initialize_firebase(args.cred)
         print("✅ Conectado a Firebase exitosamente")
