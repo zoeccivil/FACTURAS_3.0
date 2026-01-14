@@ -717,6 +717,24 @@ class LogicControllerFirebase:
             if "total_amount_rd" not in invoice_data:
                 invoice_data["total_amount_rd"] = total_rd
 
+            # ✅ NUEVO: Calcular ITBIS en RD$ (multiplicar por tasa de cambio)
+            try:
+                itbis_original = float(invoice_data.get("itbis", 0.0))
+                itbis_rd = itbis_original * rate
+                
+                # Guardar tanto el ITBIS original como el convertido
+                invoice_data["itbis_original_currency"] = itbis_original
+                invoice_data["itbis_rd"] = itbis_rd
+                invoice_data["itbis"] = itbis_rd  # El campo principal ahora es en RD$
+            except Exception as e:
+                print(f"[FIREBASE] WARN calculando ITBIS: {e}")
+                
+            # ✅ NUEVO: Guardar total original también
+            try:
+                invoice_data["total_amount_original_currency"] = total
+            except Exception:
+                pass
+
             # Normalizar fechas:  date -> datetime
             def _normalize_date_field(key: str):
                 val = invoice_data.get(key)

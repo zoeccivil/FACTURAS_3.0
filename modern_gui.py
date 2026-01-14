@@ -584,6 +584,10 @@ class ModernMainWindow(QMainWindow):
         self._add_nav_button(
             sidebar_layout, "fa5s.book", "Contabilidad", "accounting"
         )
+        # ✅ NUEVO: Botón de Optimizador Financiero
+        self._add_nav_button(
+            sidebar_layout, "fa5s.chart-bar", "Optimizador\nFinanciero", "financial_optimizer"
+        )
         self._add_nav_button(
             sidebar_layout, "fa5s.chart-line", "Reportes", "reportes"
         )
@@ -874,10 +878,13 @@ class ModernMainWindow(QMainWindow):
         elif key == "profit_summary":
             self.open_profit_summary_window()
 
-
         # ✅ NUEVO:  Caso para Contabilidad
         elif key == "accounting":
             self.open_accounting_menu()
+
+        # ✅ NUEVO: Caso para Optimizador Financiero
+        elif key == "financial_optimizer":
+            self.open_financial_optimizer()
 
         elif key == "reportes":
             # Abrir menú de opciones de reporte
@@ -1652,6 +1659,74 @@ class ModernMainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"No se pudo abrir la ventana:\n{e}")
             import traceback
             traceback. print_exc()
+
+    def open_financial_optimizer(self):
+        """Abre el Optimizador Financiero."""
+        try:
+            company_id = self.get_current_company_id()
+            company_name = self.company_selector.currentText()
+            
+            if not company_id:
+                QMessageBox.warning(self, "Sin Empresa", "Selecciona una empresa primero.")
+                return
+            
+            from PyQt6.QtCore import QDate
+            
+            # Usar mes y año actuales de los selectores
+            month_name = self.month_selector.currentText()
+            month_str = self.MONTHS_MAP.get(month_name, None)
+            
+            try:
+                year_int = int(self.year_selector.currentText())
+            except:
+                year_int = QDate.currentDate().year()
+            
+            if not month_str:
+                month_str = f"{QDate.currentDate().month():02d}"
+            
+            # Obtener datos del balance para el optimizador
+            balance_data = self.controller.get_balance_sheet_for_optimizer(
+                company_id, year_int, int(month_str)
+            )
+            
+            if not balance_data or not balance_data.get('has_real_data'):
+                reply = QMessageBox.question(
+                    self,
+                    "Datos Contables No Disponibles",
+                    "No hay datos contables completos para este periodo.\n\n"
+                    "El optimizador requiere que el sistema contable esté actualizado.\n\n"
+                    "¿Desea abrir el Balance General para verificar los datos?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    self._open_balance_sheet(company_id, company_name)
+                return
+            
+            # Mostrar información del optimizador
+            QMessageBox.information(
+                self,
+                "🎯 Optimizador Financiero",
+                f"Análisis Financiero para {company_name}\n"
+                f"Periodo: {month_name} {year_int}\n\n"
+                f"📊 Datos Disponibles:\n"
+                f"• Activos Corrientes: RD$ {balance_data.get('current_assets', 0):,.2f}\n"
+                f"• Activos No Corrientes: RD$ {balance_data.get('non_current_assets', 0):,.2f}\n"
+                f"• Pasivos Corrientes: RD$ {balance_data.get('current_liabilities', 0):,.2f}\n"
+                f"• Pasivos No Corrientes: RD$ {balance_data.get('non_current_liabilities', 0):,.2f}\n"
+                f"• Patrimonio: RD$ {balance_data.get('equity', 0):,.2f}\n"
+                f"• Utilidad Neta: RD$ {balance_data.get('net_income', 0):,.2f}\n\n"
+                f"📈 Ratios Calculados:\n"
+                f"• ROA: {(balance_data.get('net_income', 0) / balance_data.get('total_assets', 1) * 100):.2f}%\n"
+                f"• ROE: {(balance_data.get('net_income', 0) / max(balance_data.get('equity', 1), 1) * 100):.2f}%\n"
+                f"• Razón Corriente: {(balance_data.get('current_assets', 0) / max(balance_data.get('current_liabilities', 1), 1)):.2f}\n"
+                f"• Endeudamiento: {(balance_data.get('total_liabilities', 0) / max(balance_data.get('total_assets', 1), 1) * 100):.2f}%\n\n"
+                f"Consulte el MANUAL_OPTIMIZADOR_FINANCIERO.md para más detalles."
+            )
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo abrir el optimizador:\n{e}")
+            import traceback
+            traceback.print_exc()
 
     # ------------------------------------------------------------------
     # Menú y ventanas de Contabilidad
