@@ -738,9 +738,9 @@ class ModernMainWindow(QMainWindow):
         content_layout.addWidget(tx_header_widget)
 
         # Transactions table
-        self.table = QTableWidget(0, 6)
+        self.table = QTableWidget(0, 9)  # ✅ Aumentado de 6 a 9 columnas
         self.table.setHorizontalHeaderLabels(
-            ["Fecha", "Tipo", "No. Factura", "Empresa / Tercero", "ITBIS", "Total"]
+            ["Fecha", "Tipo", "No. Factura", "Empresa / Tercero", "Moneda", "ITBIS Original", "ITBIS RD$", "Total Original", "Total RD$"]
         )
         self.table.setAlternatingRowColors(False)
         self.table.setSelectionBehavior(
@@ -1054,8 +1054,19 @@ class ModernMainWindow(QMainWindow):
             tx_type = str(trans.get("type") or trans.get("invoice_type") or "")
             number = str(trans.get("number") or trans.get("invoice_number") or "")
             party = str(trans.get("party") or trans.get("third_party_name") or "")
-            itbis_val = trans.get("itbis", 0.0)
-            total_val = trans.get("total", 0.0)
+            
+            # ✅ NUEVO: Obtener valores originales y convertidos
+            currency = str(trans.get("currency", "RD$"))
+            itbis_original = float(trans.get("itbis_original_currency", 0.0) or 0.0)
+            itbis_rd = float(trans.get("itbis_rd") or trans.get("itbis", 0.0) or 0.0)
+            total_original = float(trans.get("total_amount_original_currency", 0.0) or 0.0)
+            total_rd = float(trans.get("total_amount_rd") or trans.get("total", 0.0) or 0.0)
+            
+            # Si no hay valores originales, usar los valores principales
+            if itbis_original == 0.0 and itbis_rd > 0.0:
+                itbis_original = itbis_rd
+            if total_original == 0.0 and total_rd > 0.0:
+                total_original = total_rd
 
             if tx_type == "emitida":
                 type_display = "↑ INGRESO"
@@ -1066,10 +1077,12 @@ class ModernMainWindow(QMainWindow):
 
             flags = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
 
+            # Columna 0: Fecha
             date_item = QTableWidgetItem(date_val)
             date_item.setFlags(flags)
             self.table.setItem(row_index, 0, date_item)
 
+            # Columna 1: Tipo
             type_item = QTableWidgetItem(type_display)
             type_item.setFlags(flags)
             if tx_type == "emitida":
@@ -1081,28 +1094,60 @@ class ModernMainWindow(QMainWindow):
             )
             self.table.setItem(row_index, 1, type_item)
 
+            # Columna 2: Número de factura
             num_item = QTableWidgetItem(number)
             num_item.setFlags(flags)
             num_item.setData(Qt.ItemDataRole.UserRole, number)
             self.table.setItem(row_index, 2, num_item)
 
+            # Columna 3: Tercero
             party_item = QTableWidgetItem(party)
             party_item.setFlags(flags)
             self.table.setItem(row_index, 3, party_item)
 
-            itbis_item = QTableWidgetItem(f"RD$ {float(itbis_val):,.2f}")
-            itbis_item.setFlags(flags)
-            itbis_item.setTextAlignment(
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            # Columna 4: Moneda
+            currency_item = QTableWidgetItem(currency)
+            currency_item.setFlags(flags)
+            currency_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
             )
-            self.table.setItem(row_index, 4, itbis_item)
+            self.table.setItem(row_index, 4, currency_item)
 
-            total_item = QTableWidgetItem(f"RD$ {float(total_val):,.2f}")
-            total_item.setFlags(flags)
-            total_item.setTextAlignment(
+            # Columna 5: ITBIS Original
+            itbis_orig_item = QTableWidgetItem(
+                f"{currency} {itbis_original:,.2f}" if currency != "RD$" else f"{itbis_original:,.2f}"
+            )
+            itbis_orig_item.setFlags(flags)
+            itbis_orig_item.setTextAlignment(
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             )
-            self.table.setItem(row_index, 5, total_item)
+            self.table.setItem(row_index, 5, itbis_orig_item)
+
+            # Columna 6: ITBIS RD$
+            itbis_rd_item = QTableWidgetItem(f"RD$ {itbis_rd:,.2f}")
+            itbis_rd_item.setFlags(flags)
+            itbis_rd_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            self.table.setItem(row_index, 6, itbis_rd_item)
+
+            # Columna 7: Total Original
+            total_orig_item = QTableWidgetItem(
+                f"{currency} {total_original:,.2f}" if currency != "RD$" else f"{total_original:,.2f}"
+            )
+            total_orig_item.setFlags(flags)
+            total_orig_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            self.table.setItem(row_index, 7, total_orig_item)
+
+            # Columna 8: Total RD$
+            total_rd_item = QTableWidgetItem(f"RD$ {total_rd:,.2f}")
+            total_rd_item.setFlags(flags)
+            total_rd_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            self.table.setItem(row_index, 8, total_rd_item)
 
             # Colores por tipo: fila completa
             if tx_type == "emitida":
