@@ -231,6 +231,11 @@ class AnnualExpensesManager(QDialog):
         self.table.setHorizontalHeaderLabels([
             "Concepto", "Categoría", f"Valor {self._get_month_name()}", "Acumulado Año", "Acciones"
         ])
+        
+        # ✅ Agregar tooltip a columna "Acumulado Año"
+        header_item = self.table.horizontalHeaderItem(3)
+        if header_item:
+            header_item.setToolTip("Suma acumulativa de Enero hasta el mes actual (valores se arrastran mes a mes)")
 
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -457,6 +462,11 @@ class AnnualExpensesManager(QDialog):
                 "Acumulado Año", 
                 "Acciones"
             ])
+            
+            # ✅ Actualizar tooltip de columna "Acumulado Año"
+            header_item = self.table.horizontalHeaderItem(3)
+            if header_item:
+                header_item.setToolTip(f"Suma acumulativa de Enero hasta {month_name} (valores se arrastran mes a mes)")
 
     def _prev_month(self):
         """Navega al mes anterior."""
@@ -522,13 +532,10 @@ class AnnualExpensesManager(QDialog):
                         value_month = float(monthly_values[m_str] or 0.0)
                         break
 
-            # Acumulado año = valor de diciembre o último mes disponible
-            value_year = value_month  # Por defecto
-            for m in range(12, int(self.current_month_str), -1):
-                m_str = f"{m:02d}"
-                if m_str in monthly_values:
-                    value_year = float(monthly_values[m_str] or 0.0)
-                    break
+            # ✅ CORREGIDO: Acumulado año = valor del mes actual (que es acumulativo)
+            # Como el sistema guarda valores acumulativos, el valor del mes actual
+            # ya ES el acumulado del año hasta ese mes
+            value_year = value_month
 
             total_month += value_month
 
