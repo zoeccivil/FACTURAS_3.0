@@ -67,18 +67,18 @@ class AnnualExpensesManager(QDialog):
         self._load_concepts()
 
     def _build_ui(self):
-            # Habilitar redimensionamiento del layout principal
+            # Habilitar redimensionamiento del layout principal - COMPACTO
             root = QVBoxLayout(self)
-            root.setContentsMargins(20, 20, 20, 20)
-            root.setSpacing(16)
+            root.setContentsMargins(12, 12, 12, 12)  # Reducido de 20 a 12
+            root.setSpacing(10)  # Reducido de 16 a 10
 
-            # === HEADER (Horizontal para ahorrar espacio vertical) ===
+            # === HEADER (Horizontal para ahorrar espacio vertical) - COMPACTO ===
             header_card = QFrame()
             header_card.setObjectName("headerCard")
             # Layout horizontal para el header: Título a la izq, Navegación a la der
             header_layout = QHBoxLayout(header_card)
-            header_layout.setContentsMargins(20, 15, 20, 15)
-            header_layout.setSpacing(15)
+            header_layout.setContentsMargins(12, 10, 12, 10)  # Reducido
+            header_layout.setSpacing(10)  # Reducido
 
             # Títulos a la izquierda
             title_box = QVBoxLayout()
@@ -119,8 +119,8 @@ class AnnualExpensesManager(QDialog):
             form_card = QFrame()
             form_card.setObjectName("formCard")
             grid = QGridLayout(form_card)
-            grid.setContentsMargins(20, 20, 20, 20)
-            grid.setSpacing(15)
+            grid.setContentsMargins(12, 12, 12, 12)  # Reducido
+            grid.setSpacing(10)  # Reducido
             # Configurar proporciones: Col 1 (Inputs largos) se estira más
             grid.setColumnStretch(1, 2) 
             grid.setColumnStretch(3, 1)
@@ -213,52 +213,108 @@ class AnnualExpensesManager(QDialog):
 
             self.table = QTableWidget()
             self.table.setObjectName("modernTable")
-            self.table.setColumnCount(5)
+            self.table.setColumnCount(7)  # Aumentado de 5 a 7
             self.table.setHorizontalHeaderLabels([
-                "Concepto", "Categoría", f"Valor {self._get_month_name()}", "Acumulado Año", "Acciones"
+                "Concepto", "Categoría", f"Valor {self._get_month_name()}", 
+                "Mes Anterior", "Variación ($)", "Acumulado Año", "Acciones"
             ])
             
-            header_item = self.table.horizontalHeaderItem(3)
-            if header_item: header_item.setToolTip("Suma de todos los meses del año")
+            # Tooltips para columnas nuevas
+            header_item_ant = self.table.horizontalHeaderItem(3)
+            if header_item_ant: 
+                header_item_ant.setToolTip("Valor acumulado del mes anterior para comparación")
+            
+            header_item_var = self.table.horizontalHeaderItem(4)
+            if header_item_var: 
+                header_item_var.setToolTip("Diferencia entre mes actual y mes anterior")
+            
+            header_item_acum = self.table.horizontalHeaderItem(5)
+            if header_item_acum: 
+                header_item_acum.setToolTip("Suma acumulativa de Enero hasta el mes actual (valores se arrastran mes a mes)")
 
             header = self.table.horizontalHeader()
-            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-            header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-            header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-            header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-            header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-            self.table.setColumnWidth(4, 130)
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)  # Concepto
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Categoría
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # Valor Mes
+            header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Mes Anterior
+            header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Variación
+            header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)  # Acumulado Año
+            header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)  # Acciones
+            self.table.setColumnWidth(6, 130)
 
             self.table.setAlternatingRowColors(True)
             self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
             self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
             self.table.verticalHeader().setVisible(False)
-            self.table.verticalHeader().setDefaultSectionSize(44)
+            self.table.verticalHeader().setDefaultSectionSize(40)  # Reducido de 44 a 40
 
             table_container.addWidget(self.table)
             root.addLayout(table_container)
 
-            # === TOTAL ===
+            # === PANEL DE TOTALES CON 3 MÉTRICAS ===
             total_card = QFrame()
             total_card.setObjectName("totalCard")
             total_layout = QHBoxLayout(total_card)
-            total_layout.setContentsMargins(20, 12, 20, 12)
+            total_layout.setContentsMargins(15, 10, 15, 10)  # Reducido
+            total_layout.setSpacing(20)
             
-            total_lbl = QLabel(f"TOTAL ACUMULADO AÑO {self.current_year_int}:")
-            total_lbl.setStyleSheet("font-size: 14px; font-weight: 700; color: #1E293B;")
-
-            self.label_total = QLabel("RD$ 0.00")
-            self.label_total.setStyleSheet("font-size: 20px; font-weight: 800; color: #DC2626;")
-
+            # Métrica 1: Total Mes Actual
+            metric1_box = QVBoxLayout()
+            metric1_box.setSpacing(2)
+            metric1_title = QLabel("TOTAL MES ACTUAL")
+            metric1_title.setStyleSheet("font-size: 11px; font-weight: 700; color: #6B7280; text-transform: uppercase;")
+            metric1_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.label_total_mes = QLabel("RD$ 0.00")
+            self.label_total_mes.setStyleSheet("font-size: 18px; font-weight: 800; color: #1E293B;")
+            self.label_total_mes.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            metric1_box.addWidget(metric1_title)
+            metric1_box.addWidget(self.label_total_mes)
+            
+            # Métrica 2: Variación vs Mes Anterior
+            metric2_box = QVBoxLayout()
+            metric2_box.setSpacing(2)
+            metric2_title = QLabel("VARIACIÓN VS MES ANTERIOR")
+            metric2_title.setStyleSheet("font-size: 11px; font-weight: 700; color: #6B7280; text-transform: uppercase;")
+            metric2_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.label_variacion = QLabel("RD$ 0.00")
+            self.label_variacion.setStyleSheet("font-size: 18px; font-weight: 800; color: #3B82F6;")
+            self.label_variacion.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            metric2_box.addWidget(metric2_title)
+            metric2_box.addWidget(self.label_variacion)
+            
+            # Métrica 3: Total Acumulado Año
+            metric3_box = QVBoxLayout()
+            metric3_box.setSpacing(2)
+            metric3_title = QLabel(f"TOTAL ACUMULADO AÑO {self.current_year_int}")
+            metric3_title.setStyleSheet("font-size: 11px; font-weight: 700; color: #6B7280; text-transform: uppercase;")
+            metric3_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.label_total_acum = QLabel("RD$ 0.00")
+            self.label_total_acum.setStyleSheet("font-size: 18px; font-weight: 800; color: #DC2626;")
+            self.label_total_acum.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            metric3_box.addWidget(metric3_title)
+            metric3_box.addWidget(self.label_total_acum)
+            
             total_layout.addStretch()
-            total_layout.addWidget(total_lbl)
-            total_layout.addWidget(self.label_total)
+            total_layout.addLayout(metric1_box)
+            total_layout.addWidget(self._create_separator())
+            total_layout.addLayout(metric2_box)
+            total_layout.addWidget(self._create_separator())
+            total_layout.addLayout(metric3_box)
+            total_layout.addStretch()
 
             root.addWidget(total_card)
 
             # Aplicar estilos y actualizar textos
             self._apply_styles()
             self._update_labels()
+
+    def _create_separator(self):
+        """Crea una línea vertical separadora."""
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.VLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setStyleSheet("background-color: #E5E7EB; max-width: 1px;")
+        return separator
 
     def _apply_styles(self):
             self.setStyleSheet("""
@@ -418,18 +474,35 @@ class AnnualExpensesManager(QDialog):
         self.lbl_valor_mes.setText(f"Valor Acumulado ({month_name}):")
         
         # Actualizar header de tabla
-        if self.table.columnCount() >= 3:
+        if self.table.columnCount() >= 7:
             self.table.setHorizontalHeaderLabels([
                 "Concepto", 
                 "Categoría", 
                 f"Valor {month_name}", 
+                "Mes Anterior",
+                "Variación ($)",
                 "Acumulado Año", 
                 "Acciones"
             ])
-            # Tooltip
-            header_item = self.table.horizontalHeaderItem(3)
-            if header_item:
-                header_item.setToolTip(f"Suma acumulativa de Enero hasta {month_name}")
+            # Tooltips
+            header_item_ant = self.table.horizontalHeaderItem(3)
+            if header_item_ant:
+                prev_month_name = self._get_prev_month_name()
+                header_item_ant.setToolTip(f"Valor acumulado de {prev_month_name}")
+            
+            header_item_acum = self.table.horizontalHeaderItem(5)
+            if header_item_acum:
+                header_item_acum.setToolTip(f"Suma acumulativa de Enero hasta {month_name}")
+    
+    def _get_prev_month_name(self):
+        """Devuelve el nombre del mes anterior."""
+        month_int = int(self.current_month_str)
+        prev_month_int = month_int - 1 if month_int > 1 else 12
+        prev_month_str = f"{prev_month_int:02d}"
+        for name, code in self.MONTHS_MAP.items():
+            if code == prev_month_str:
+                return name
+        return "Mes Anterior"
 
     def _prev_month(self):
         """Navega al mes anterior."""
@@ -460,7 +533,7 @@ class AnnualExpensesManager(QDialog):
         self._load_concepts()
 
     def _load_concepts(self):
-        """Carga los conceptos anuales y corrige el cálculo de totales."""
+        """Carga los conceptos anuales con cálculo de variaciones."""
         concepts = []
         try:
             if hasattr(self.controller, "get_annual_expense_concepts"):
@@ -469,11 +542,18 @@ class AnnualExpensesManager(QDialog):
                     self.current_year_int
                 ) or []
         except Exception as e:
-            print(f"[ANNUAL_MANAGER] Error:  {e}")
+            print(f"[ANNUAL_MANAGER] Error: {e}")
             QMessageBox.warning(self, "Error", f"Error cargando conceptos:\n{e}")
 
         self.table.setRowCount(0)
-        total_month = 0.0 # Total del mes actual, que es lo que muestra el cuadro rojo abajo
+        total_month = 0.0  # Total del mes actual
+        total_prev_month = 0.0  # Total del mes anterior
+        total_acum_year = 0.0  # Total acumulado del año
+
+        # Calcular mes anterior
+        month_int = int(self.current_month_str)
+        prev_month_int = month_int - 1 if month_int > 1 else 12
+        prev_month_str = f"{prev_month_int:02d}"
 
         for concept_data in concepts:
             row = self.table.rowCount()
@@ -488,33 +568,74 @@ class AnnualExpensesManager(QDialog):
             
             # Arrastre de valor si es 0
             if value_month == 0.0:
-                month_int = int(self.current_month_str)
                 for m in range(month_int - 1, 0, -1):
                     m_str = f"{m:02d}"
                     if m_str in monthly_values:
                         value_month = float(monthly_values[m_str] or 0.0)
                         break
 
-            # Acumulado anual real (Suma de todos los meses)
-            value_year = sum(float(val or 0.0) for val in monthly_values.values())
+            # Valor mes anterior
+            value_prev_month = float(monthly_values.get(prev_month_str, 0.0) or 0.0)
+            
+            # Arrastre de valor del mes anterior si es 0
+            if value_prev_month == 0.0:
+                for m in range(prev_month_int - 1, 0, -1):
+                    m_str = f"{m:02d}"
+                    if m_str in monthly_values:
+                        value_prev_month = float(monthly_values[m_str] or 0.0)
+                        break
 
-            # Sumar al total general del mes visible
+            # Variación (diferencia entre mes actual y anterior)
+            variation = value_month - value_prev_month
+
+            # Acumulado anual: el valor del mes actual YA ES el acumulado
+            # (porque el sistema es acumulativo)
+            value_year = value_month
+
+            # Sumar a los totales
             total_month += value_month
+            total_prev_month += value_prev_month
+            total_acum_year += value_year
 
+            # Columna 0: Concepto
             self.table.setItem(row, 0, QTableWidgetItem(concept_name))
+            
+            # Columna 1: Categoría
             self.table.setItem(row, 1, QTableWidgetItem(category))
 
+            # Columna 2: Valor Mes Actual
             item_month = QTableWidgetItem(f"RD$ {value_month:,.2f}")
             item_month.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.table.setItem(row, 2, item_month)
 
+            # Columna 3: Mes Anterior
+            item_prev = QTableWidgetItem(f"RD$ {value_prev_month:,.2f}")
+            item_prev.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            item_prev.setForeground(QColor("#6B7280"))
+            self.table.setItem(row, 3, item_prev)
+
+            # Columna 4: Variación ($)
+            item_var = QTableWidgetItem(f"RD$ {variation:,.2f}")
+            item_var.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            # Color según variación: Rojo si aumentó (negativo para gastos), Verde si disminuyó
+            if variation > 0:
+                item_var.setForeground(QColor("#DC2626"))  # Rojo (aumentó el gasto)
+                item_var.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+            elif variation < 0:
+                item_var.setForeground(QColor("#15803D"))  # Verde (disminuyó el gasto)
+                item_var.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+            else:
+                item_var.setForeground(QColor("#6B7280"))  # Gris (sin cambio)
+            self.table.setItem(row, 4, item_var)
+
+            # Columna 5: Acumulado Año
             item_year = QTableWidgetItem(f"RD$ {value_year:,.2f}")
             item_year.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             item_year.setForeground(QColor("#15803D"))
             item_year.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-            self.table.setItem(row, 3, item_year)
+            self.table.setItem(row, 5, item_year)
 
-            # Acciones
+            # Columna 6: Acciones
             actions_widget = QFrame()
             actions_layout = QHBoxLayout(actions_widget)
             actions_layout.setContentsMargins(8, 4, 8, 4)
@@ -540,9 +661,22 @@ class AnnualExpensesManager(QDialog):
             actions_layout.addWidget(btn_delete)
             actions_layout.addStretch()
 
-            self.table.setCellWidget(row, 4, actions_widget)
+            self.table.setCellWidget(row, 6, actions_widget)
 
-        self.label_total.setText(f"RD$ {total_month:,.2f}")
+        # Actualizar los 3 labels del footer
+        self.label_total_mes.setText(f"RD$ {total_month:,.2f}")
+        
+        total_variation = total_month - total_prev_month
+        self.label_variacion.setText(f"RD$ {total_variation:,.2f}")
+        # Color según variación total
+        if total_variation > 0:
+            self.label_variacion.setStyleSheet("font-size: 18px; font-weight: 800; color: #DC2626;")
+        elif total_variation < 0:
+            self.label_variacion.setStyleSheet("font-size: 18px; font-weight: 800; color: #15803D;")
+        else:
+            self.label_variacion.setStyleSheet("font-size: 18px; font-weight: 800; color: #6B7280;")
+        
+        self.label_total_acum.setText(f"RD$ {total_acum_year:,.2f}")
 
     def _new_concept(self):
         """Limpia el formulario para crear un nuevo concepto."""
