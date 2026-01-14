@@ -617,15 +617,16 @@ class AnnualExpensesManager(QDialog):
             # Columna 4: Variación ($)
             item_var = QTableWidgetItem(f"RD$ {variation:,.2f}")
             item_var.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            # Color según variación: Rojo si aumentó (negativo para gastos), Verde si disminuyó
+            # Color según variación: Verde si disminuyó (positivo), Rojo si aumentó (negativo), Azul si cero
             if variation > 0:
-                item_var.setForeground(QColor("#DC2626"))  # Rojo (aumentó el gasto)
+                item_var.setForeground(QColor("#10B981"))  # Verde (disminuyó el gasto - positivo)
                 item_var.setFont(QFont("Arial", 10, QFont.Weight.Bold))
             elif variation < 0:
-                item_var.setForeground(QColor("#15803D"))  # Verde (disminuyó el gasto)
+                item_var.setForeground(QColor("#EF4444"))  # Rojo (aumentó el gasto - negativo)
                 item_var.setFont(QFont("Arial", 10, QFont.Weight.Bold))
             else:
-                item_var.setForeground(QColor("#6B7280"))  # Gris (sin cambio)
+                item_var.setForeground(QColor("#3B82F6"))  # Azul (sin cambio)
+                item_var.setFont(QFont("Arial", 10, QFont.Weight.Bold))
             self.table.setItem(row, 4, item_var)
 
             # Columna 5: Acumulado Año
@@ -668,13 +669,13 @@ class AnnualExpensesManager(QDialog):
         
         total_variation = total_month - total_prev_month
         self.label_variacion.setText(f"RD$ {total_variation:,.2f}")
-        # Color según variación total
+        # Color según variación total: Verde (positivo), Rojo (negativo), Azul (cero)
         if total_variation > 0:
-            self.label_variacion.setStyleSheet("font-size: 18px; font-weight: 800; color: #DC2626;")
+            self.label_variacion.setStyleSheet("font-size: 18px; font-weight: 800; color: #10B981;")  # Verde
         elif total_variation < 0:
-            self.label_variacion.setStyleSheet("font-size: 18px; font-weight: 800; color: #15803D;")
+            self.label_variacion.setStyleSheet("font-size: 18px; font-weight: 800; color: #EF4444;")  # Rojo
         else:
-            self.label_variacion.setStyleSheet("font-size: 18px; font-weight: 800; color: #6B7280;")
+            self.label_variacion.setStyleSheet("font-size: 18px; font-weight: 800; color: #3B82F6;")  # Azul
         
         self.label_total_acum.setText(f"RD$ {total_acum_year:,.2f}")
 
