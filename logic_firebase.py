@@ -3465,8 +3465,9 @@ class LogicControllerFirebase:
                     last_value = float(monthly_values_dict[month_str] or 0.0)
                 values.append(last_value)
             
-            # Calcular total del año (último valor = acumulado total)
-            total_year = values[-1] if values else 0.0
+            # ✅ CORREGIDO: Calcular total del año como el valor máximo acumulado
+            # (buscar el último mes con datos, no asumir diciembre)
+            total_year = max(values) if values else 0.0
             
             summary["concepts"].append({
                 "name": concept_name,
@@ -3479,7 +3480,8 @@ class LogicControllerFirebase:
             for i, val in enumerate(values):
                 summary["monthly_totals"][i] += val
         
-        summary["grand_total"] = summary["monthly_totals"][-1] if summary["monthly_totals"] else 0.0
+        # ✅ CORREGIDO: Gran total como máximo acumulado, no solo diciembre
+        summary["grand_total"] = max(summary["monthly_totals"]) if summary["monthly_totals"] else 0.0
         
         return summary
 
