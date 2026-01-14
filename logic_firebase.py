@@ -418,8 +418,18 @@ class LogicControllerFirebase:
             except Exception:
                 return 1.0
 
-        itbis_ingresos = sum(float(inv.get("itbis", 0.0)) * _fx(inv) for inv in emitted)
-        itbis_gastos = sum(float(inv.get("itbis", 0.0)) * _fx(inv) for inv in expenses)
+        # ✅ CORRECCIÓN: El ITBIS ya está en RD$ después de nuestra corrección
+        # Ya no necesitamos multiplicar por _fx(inv) porque el campo "itbis" 
+        # ahora siempre está en RD$ gracias al fix en add_invoice()
+        # Solo usamos itbis_rd si existe, sino fallback a itbis (que ya debería estar en RD$)
+        itbis_ingresos = sum(
+            float(inv.get("itbis_rd") or inv.get("itbis", 0.0) or 0.0) 
+            for inv in emitted
+        )
+        itbis_gastos = sum(
+            float(inv.get("itbis_rd") or inv.get("itbis", 0.0) or 0.0) 
+            for inv in expenses
+        )
 
         net_itbis = itbis_ingresos - itbis_gastos
 
