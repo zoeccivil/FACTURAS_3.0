@@ -507,16 +507,54 @@ class LogicControllerFirebase:
 
             rows: List[Dict[str, Any]] = []
             for inv in invoices_sorted:
+                # ✅ NUEVO: Incluir campos de moneda original
+                currency = inv.get("currency", "RD$")
+                exchange_rate = float(inv.get("exchange_rate", 1.0) or 1.0)
+                
+                # Obtener valores originales si existen
+                itbis_original = inv.get("itbis_original_currency")
+                total_original = inv.get("total_amount_original_currency")
+                
+                # Si no existen campos originales y la moneda no es RD$, calcular desde RD$
+                if itbis_original is None and currency not in ["RD$", "DOP", "RD", "DOP$"]:
+                    itbis_rd = float(inv.get("itbis_rd") or inv.get("itbis", 0.0) or 0.0)
+                    if exchange_rate > 0:
+                        itbis_original = itbis_rd / exchange_rate
+                    else:
+                        itbis_original = 0.0
+                elif itbis_original is None:
+                    # Para RD$, usar el valor en RD$
+                    itbis_original = float(inv.get("itbis_rd") or inv.get("itbis", 0.0) or 0.0)
+                else:
+                    itbis_original = float(itbis_original or 0.0)
+                
+                if total_original is None and currency not in ["RD$", "DOP", "RD", "DOP$"]:
+                    total_rd = float(inv.get("total_amount_rd") or inv.get("total_amount", 0.0) or 0.0)
+                    if exchange_rate > 0:
+                        total_original = total_rd / exchange_rate
+                    else:
+                        total_original = 0.0
+                elif total_original is None:
+                    # Para RD$, usar el valor en RD$
+                    total_original = float(inv.get("total_amount_rd") or inv.get("total_amount", 0.0) or 0.0)
+                else:
+                    total_original = float(total_original or 0.0)
+                
                 rows.append(
                     {
                         "date": _format_date_for_display(inv.get("invoice_date")),
                         "type": inv.get("invoice_type", ""),
                         "number": inv.get("invoice_number", ""),
                         "party": inv.get("third_party_name", ""),
+                        "currency": currency,
                         "itbis": float(inv.get("itbis", 0.0)),
+                        "itbis_original_currency": itbis_original,
+                        "itbis_rd": float(inv.get("itbis_rd") or inv.get("itbis", 0.0) or 0.0),
                         "total": float(
                             inv.get("total_amount_rd", inv.get("total_amount", 0.0))
                         ),
+                        "total_amount_original_currency": total_original,
+                        "total_amount_rd": float(inv.get("total_amount_rd") or inv.get("total_amount", 0.0) or 0.0),
                     }
                 )
             return rows

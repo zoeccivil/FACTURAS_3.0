@@ -1061,12 +1061,6 @@ class ModernMainWindow(QMainWindow):
             itbis_rd = float(trans.get("itbis_rd") or trans.get("itbis", 0.0) or 0.0)
             total_original = float(trans.get("total_amount_original_currency", 0.0) or 0.0)
             total_rd = float(trans.get("total_amount_rd") or trans.get("total", 0.0) or 0.0)
-            
-            # Si no hay valores originales, usar los valores principales
-            if itbis_original == 0.0 and itbis_rd > 0.0:
-                itbis_original = itbis_rd
-            if total_original == 0.0 and total_rd > 0.0:
-                total_original = total_rd
 
             if tx_type == "emitida":
                 type_display = "↑ INGRESO"
@@ -1114,9 +1108,13 @@ class ModernMainWindow(QMainWindow):
             self.table.setItem(row_index, 4, currency_item)
 
             # Columna 5: ITBIS Original
-            itbis_orig_item = QTableWidgetItem(
-                f"{currency} {itbis_original:,.2f}" if currency != "RD$" else f"{itbis_original:,.2f}"
-            )
+            # Para moneda extranjera, mostrar en esa moneda; para RD$, mostrar sin prefijo
+            if currency in ["RD$", "DOP", "RD", "DOP$"]:
+                itbis_orig_display = f"RD$ {itbis_original:,.2f}"
+            else:
+                itbis_orig_display = f"{currency} {itbis_original:,.2f}"
+            
+            itbis_orig_item = QTableWidgetItem(itbis_orig_display)
             itbis_orig_item.setFlags(flags)
             itbis_orig_item.setTextAlignment(
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -1132,9 +1130,13 @@ class ModernMainWindow(QMainWindow):
             self.table.setItem(row_index, 6, itbis_rd_item)
 
             # Columna 7: Total Original
-            total_orig_item = QTableWidgetItem(
-                f"{currency} {total_original:,.2f}" if currency != "RD$" else f"{total_original:,.2f}"
-            )
+            # Para moneda extranjera, mostrar en esa moneda; para RD$, mostrar sin prefijo
+            if currency in ["RD$", "DOP", "RD", "DOP$"]:
+                total_orig_display = f"RD$ {total_original:,.2f}"
+            else:
+                total_orig_display = f"{currency} {total_original:,.2f}"
+            
+            total_orig_item = QTableWidgetItem(total_orig_display)
             total_orig_item.setFlags(flags)
             total_orig_item.setTextAlignment(
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
