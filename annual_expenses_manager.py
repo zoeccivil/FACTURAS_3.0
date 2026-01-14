@@ -2,6 +2,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,  # ✅ Nuevo: Para layout compacto
     QLabel,
     QLineEdit,
     QPushButton,
@@ -12,21 +13,17 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem,
     QHeaderView,
     QTextEdit,
+    QWidget,
+    QScrollArea
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QFont, QColor
 import calendar
 
 
 class AnnualExpensesManager(QDialog):
     """
-    Gestor de Gastos Adicionales ACUMULATIVOS por Año.  
-    
-    - Muestra conceptos anuales
-    - Permite editar valor acumulado por mes
-    - Navegación entre meses
-    - Vista de histórico mensual
-    - Integración con catálogo maestro
+    Gestor de Gastos Adicionales ACUMULATIVOS por Año.
     """
 
     MONTHS_MAP = {
@@ -40,7 +37,7 @@ class AnnualExpensesManager(QDialog):
         parent,
         controller,
         company_id,
-        company_name:  str,
+        company_name: str,
         month_str: str,
         year_int: int,
     ):
@@ -55,386 +52,353 @@ class AnnualExpensesManager(QDialog):
         self.editing_concept_name = None
 
         self.setWindowTitle(f"Gastos Adicionales Anuales - {company_name} - {year_int}")
-        self.resize(1000, 680)
-        self.setModal(True)
+        self.resize(1100, 720) # Un poco más grande para respirar
+        
+        # ✅ HABILITAR BOTONES DE VENTANA (Max/Min/Cerrar)
+        self.setWindowFlags(
+            Qt.WindowType.Window 
+            | Qt.WindowType.WindowMinimizeButtonHint 
+            | Qt.WindowType.WindowMaximizeButtonHint 
+            | Qt.WindowType.WindowCloseButtonHint
+        )
+        self.setWindowModality(Qt.WindowModality.ApplicationModal)
 
         self._build_ui()
         self._load_concepts()
 
     def _build_ui(self):
-        root = QVBoxLayout(self)
-        root.setContentsMargins(20, 20, 20, 20)
-        root.setSpacing(16)
+            # Habilitar redimensionamiento del layout principal
+            root = QVBoxLayout(self)
+            root.setContentsMargins(20, 20, 20, 20)
+            root.setSpacing(16)
 
-        # === HEADER CON NAVEGACIÓN ===
-        header_card = QFrame()
-        header_card.setObjectName("headerCard")
-        header_layout = QVBoxLayout(header_card)
-        header_layout.setContentsMargins(20, 16, 20, 16)
-        header_layout.setSpacing(8)
+            # === HEADER (Horizontal para ahorrar espacio vertical) ===
+            header_card = QFrame()
+            header_card.setObjectName("headerCard")
+            # Layout horizontal para el header: Título a la izq, Navegación a la der
+            header_layout = QHBoxLayout(header_card)
+            header_layout.setContentsMargins(20, 15, 20, 15)
+            header_layout.setSpacing(15)
 
-        title_row = QHBoxLayout()
-        title_row.setSpacing(12)
+            # Títulos a la izquierda
+            title_box = QVBoxLayout()
+            title_box.setSpacing(4)
+            title = QLabel(f"📊 Gastos Adicionales")
+            title.setObjectName("dialogTitle") # Usa estilo definido en _apply_styles
+            self.subtitle_label = QLabel() 
+            self.subtitle_label.setObjectName("dialogSubtitle")
+            title_box.addWidget(title)
+            title_box.addWidget(self.subtitle_label)
+            
+            header_layout.addLayout(title_box)
+            header_layout.addStretch() # Empuja la navegación a la derecha
 
-        title = QLabel(f"📊 Gastos Adicionales Acumulativos")
-        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #0F172A;")
-        title_row.addWidget(title)
-        title_row.addStretch()
+            # Navegación a la derecha
+            self.btn_prev_month = QPushButton("◀")
+            self.btn_prev_month.setObjectName("navButton")
+            self.btn_prev_month.setFixedWidth(40)
+            self.btn_prev_month.clicked.connect(self._prev_month)
 
-        # Navegación de mes
-        nav_container = QHBoxLayout()
-        nav_container.setSpacing(8)
+            self.month_label = QLabel()
+            self.month_label.setObjectName("monthLabel") # ¡CLAVE PARA EL ESTILO AZUL!
+            self.month_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.month_label.setFixedWidth(160)
 
-        self.btn_prev_month = QPushButton("◀ Anterior")
-        self.btn_prev_month.setObjectName("navButton")
-        self.btn_prev_month.clicked.connect(self._prev_month)
+            self.btn_next_month = QPushButton("▶")
+            self.btn_next_month.setObjectName("navButton")
+            self.btn_next_month.setFixedWidth(40)
+            self.btn_next_month.clicked.connect(self._next_month)
 
-        self.month_label = QLabel()
-        self.month_label.setStyleSheet(
-            "font-size: 14px; font-weight: 700; color: #1E293B; "
-            "padding: 6px 20px; background-color: #EFF6FF; border-radius: 6px;"
-        )
-        self.month_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.month_label.setMinimumWidth(180)
+            header_layout.addWidget(self.btn_prev_month)
+            header_layout.addWidget(self.month_label)
+            header_layout.addWidget(self.btn_next_month)
 
-        self.btn_next_month = QPushButton("Siguiente ▶")
-        self.btn_next_month.setObjectName("navButton")
-        self.btn_next_month.clicked.connect(self._next_month)
+            root.addWidget(header_card)
 
-        nav_container.addWidget(self.btn_prev_month)
-        nav_container.addWidget(self.month_label)
-        nav_container.addWidget(self.btn_next_month)
+            # === FORMULARIO COMPACTO (GRID LAYOUT) ===
+            form_card = QFrame()
+            form_card.setObjectName("formCard")
+            grid = QGridLayout(form_card)
+            grid.setContentsMargins(20, 20, 20, 20)
+            grid.setSpacing(15)
+            # Configurar proporciones: Col 1 (Inputs largos) se estira más
+            grid.setColumnStretch(1, 2) 
+            grid.setColumnStretch(3, 1)
 
-        title_row.addLayout(nav_container)
+            # Título Formulario
+            form_title = QLabel("Editar Concepto Anual")
+            form_title.setStyleSheet("font-weight: 700; color: #1E293B; font-size: 14px; margin-bottom: 5px;")
+            grid.addWidget(form_title, 0, 0, 1, 4)
 
-        header_layout.addLayout(title_row)
+            # Fila 1: Concepto y Categoría
+            lbl_conc = QLabel("Concepto:")
+            lbl_conc.setProperty("class", "fieldLabel")
+            self.edit_concepto = QLineEdit()
+            self.edit_concepto.setPlaceholderText("Nombre del gasto...")
+            self.edit_concepto.setObjectName("modernInput")
 
-        self.subtitle_label = QLabel()
-        self.subtitle_label.setStyleSheet("font-size: 12px; color: #64748B;")
-        header_layout.addWidget(self.subtitle_label)
+            lbl_cat = QLabel("Categoría:")
+            lbl_cat.setProperty("class", "fieldLabel")
+            self.combo_categoria = QComboBox()
+            self.combo_categoria.setObjectName("modernCombo")
+            self.combo_categoria.addItems([
+                "Nómina", "Servicios", "Alquiler", "Mantenimiento",
+                "Publicidad", "Transporte", "Depreciación", "Otros"
+            ])
+            self.combo_categoria.setEditable(True)
 
-        root.addWidget(header_card)
+            grid.addWidget(lbl_conc, 1, 0)
+            grid.addWidget(self.edit_concepto, 1, 1)
+            grid.addWidget(lbl_cat, 1, 2)
+            grid.addWidget(self.combo_categoria, 1, 3)
 
-        # === FORMULARIO PARA EDITAR/AGREGAR ===
-        form_card = QFrame()
-        form_card.setObjectName("formCard")
-        form_layout = QVBoxLayout(form_card)
-        form_layout.setContentsMargins(20, 16, 20, 16)
-        form_layout.setSpacing(12)
+            # Fila 2: Valor y Nota
+            self.lbl_valor_mes = QLabel("Valor Mes:")
+            self.lbl_valor_mes.setProperty("class", "fieldLabel")
+            
+            self.edit_valor = QLineEdit()
+            self.edit_valor.setPlaceholderText("0.00")
+            self.edit_valor.setObjectName("modernInput")
+            self.edit_valor.setAlignment(Qt.AlignmentFlag.AlignRight)
 
-        form_title = QLabel("Editar Concepto Anual")
-        form_title.setStyleSheet("font-weight: 700; color: #1E293B; font-size: 14px;")
-        form_layout.addWidget(form_title)
+            lbl_nota = QLabel("Nota:")
+            lbl_nota.setProperty("class", "fieldLabel")
+            self.edit_nota = QLineEdit() 
+            self.edit_nota.setObjectName("modernInput")
+            self.edit_nota.setPlaceholderText("Comentario opcional...")
 
-        row1 = QHBoxLayout()
-        row1.setSpacing(12)
+            grid.addWidget(self.lbl_valor_mes, 2, 0)
+            grid.addWidget(self.edit_valor, 2, 1)
+            grid.addWidget(lbl_nota, 2, 2)
+            grid.addWidget(self.edit_nota, 2, 3)
 
-        lbl_concepto = QLabel("Concepto:")
-        lbl_concepto.setStyleSheet("color: #475569; font-weight: 600;")
-        row1.addWidget(lbl_concepto)
+            # Fila 3: Botones de Acción
+            btn_box = QHBoxLayout()
+            btn_box.setSpacing(12)
 
-        self.edit_concepto = QLineEdit()
-        self.edit_concepto.setPlaceholderText("Ej: Depreciación Equipos, Nómina Administrativa...")
-        self.edit_concepto.setObjectName("modernInput")
-        row1.addWidget(self.edit_concepto, 2)
+            self.btn_guardar = QPushButton("💾 Guardar Valor")
+            self.btn_guardar.setObjectName("primaryButton")
+            self.btn_guardar.clicked.connect(self._save_value)
 
-        lbl_categoria = QLabel("Categoría:")
-        lbl_categoria.setStyleSheet("color: #475569; font-weight: 600;")
-        row1.addWidget(lbl_categoria)
+            self.btn_nuevo = QPushButton("➕ Limpiar")
+            self.btn_nuevo.setObjectName("secondaryButton")
+            self.btn_nuevo.clicked.connect(self._new_concept)
 
-        self.combo_categoria = QComboBox()
-        self.combo_categoria.setObjectName("modernCombo")
-        self.combo_categoria.addItems([
-            "Nómina", "Servicios", "Alquiler", "Mantenimiento",
-            "Publicidad", "Transporte", "Depreciación", "Otros"
-        ])
-        self.combo_categoria.setEditable(True)
-        self.combo_categoria.setMinimumWidth(160)
-        row1.addWidget(self.combo_categoria)
+            self.btn_catalog = QPushButton("📚 Catálogo")
+            self.btn_catalog.setObjectName("catalogButton")
+            self.btn_catalog.setToolTip("Gestionar catálogo maestro")
+            self.btn_catalog.clicked.connect(self._open_concept_catalog)
 
-        form_layout.addLayout(row1)
+            self.btn_cancelar = QPushButton("Cancelar")
+            self.btn_cancelar.setObjectName("cancelButton")
+            self.btn_cancelar.clicked.connect(self._cancel_edit)
+            self.btn_cancelar.setVisible(False)
 
-        row2 = QHBoxLayout()
-        row2.setSpacing(12)
+            btn_box.addWidget(self.btn_guardar)
+            btn_box.addWidget(self.btn_nuevo)
+            btn_box.addWidget(self.btn_catalog)
+            btn_box.addWidget(self.btn_cancelar)
+            btn_box.addStretch()
 
-        lbl_valor = QLabel(f"Valor Acumulado (hasta {self._get_month_name()}):")
-        lbl_valor.setStyleSheet("color: #475569; font-weight: 600;")
-        self.lbl_valor_mes = lbl_valor
-        row2.addWidget(lbl_valor)
+            grid.addLayout(btn_box, 3, 0, 1, 4)
 
-        self.edit_valor = QLineEdit()
-        self.edit_valor.setPlaceholderText("0.00")
-        self.edit_valor.setObjectName("modernInput")
-        self.edit_valor.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.edit_valor.setMaximumWidth(200)
-        row2.addWidget(self.edit_valor)
+            root.addWidget(form_card)
 
-        row2.addWidget(QLabel("RD$"))
-        row2.addStretch()
+            # === TABLA DE CONCEPTOS ===
+            table_container = QVBoxLayout()
+            table_container.setSpacing(5)
+            table_label = QLabel("📋 Detalle de Conceptos:")
+            table_label.setStyleSheet("font-weight: 700; color: #1E293B; font-size: 14px;")
+            table_container.addWidget(table_label)
 
-        form_layout.addLayout(row2)
+            self.table = QTableWidget()
+            self.table.setObjectName("modernTable")
+            self.table.setColumnCount(5)
+            self.table.setHorizontalHeaderLabels([
+                "Concepto", "Categoría", f"Valor {self._get_month_name()}", "Acumulado Año", "Acciones"
+            ])
+            
+            header_item = self.table.horizontalHeaderItem(3)
+            if header_item: header_item.setToolTip("Suma de todos los meses del año")
 
-        row3 = QVBoxLayout()
-        row3.setSpacing(4)
+            header = self.table.horizontalHeader()
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+            self.table.setColumnWidth(4, 130)
 
-        lbl_nota = QLabel("Nota del mes (opcional):")
-        lbl_nota.setStyleSheet("color: #475569; font-weight:  600;")
-        row3.addWidget(lbl_nota)
+            self.table.setAlternatingRowColors(True)
+            self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+            self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+            self.table.verticalHeader().setVisible(False)
+            self.table.verticalHeader().setDefaultSectionSize(44)
 
-        self.edit_nota = QTextEdit()
-        self.edit_nota.setObjectName("modernTextEdit")
-        self.edit_nota.setPlaceholderText("Descripción del cambio este mes...")
-        self.edit_nota.setMaximumHeight(60)
-        row3.addWidget(self.edit_nota)
+            table_container.addWidget(self.table)
+            root.addLayout(table_container)
 
-        form_layout.addLayout(row3)
+            # === TOTAL ===
+            total_card = QFrame()
+            total_card.setObjectName("totalCard")
+            total_layout = QHBoxLayout(total_card)
+            total_layout.setContentsMargins(20, 12, 20, 12)
+            
+            total_lbl = QLabel(f"TOTAL ACUMULADO AÑO {self.current_year_int}:")
+            total_lbl.setStyleSheet("font-size: 14px; font-weight: 700; color: #1E293B;")
 
-        # === BOTONES DE ACCIÓN (Corregidos) ===
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(12)
+            self.label_total = QLabel("RD$ 0.00")
+            self.label_total.setStyleSheet("font-size: 20px; font-weight: 800; color: #DC2626;")
 
-        self.btn_guardar = QPushButton("💾 Guardar Valor")
-        self.btn_guardar.setObjectName("primaryButton")
-        self.btn_guardar.clicked.connect(self._save_value)
+            total_layout.addStretch()
+            total_layout.addWidget(total_lbl)
+            total_layout.addWidget(self.label_total)
 
-        self.btn_nuevo = QPushButton("➕ Nuevo Concepto")
-        self.btn_nuevo.setObjectName("secondaryButton")
-        self.btn_nuevo.clicked.connect(self._new_concept)
+            root.addWidget(total_card)
 
-        self.btn_catalog = QPushButton("📚 Catálogo")
-        self.btn_catalog.setObjectName("catalogButton")
-        self.btn_catalog.setToolTip("Gestionar catálogo maestro de conceptos")
-        self.btn_catalog.clicked.connect(self._open_concept_catalog)
-
-        self.btn_cancelar = QPushButton("❌ Cancelar")
-        self.btn_cancelar.setObjectName("cancelButton")
-        self.btn_cancelar.clicked.connect(self._cancel_edit)
-        self.btn_cancelar.setVisible(False)
-
-        btn_row.addWidget(self.btn_guardar)
-        btn_row.addWidget(self.btn_nuevo)
-        btn_row.addWidget(self.btn_catalog)
-        btn_row.addWidget(self.btn_cancelar)
-        btn_row.addStretch()
-
-        form_layout.addLayout(btn_row)
-        root.addWidget(form_card)
-
-        # === TABLA DE CONCEPTOS ===
-        table_label = QLabel("📋 Conceptos del Año:")
-        table_label.setStyleSheet("font-weight: 700; color: #1E293B; font-size:  14px;")
-        root.addWidget(table_label)
-
-        self.table = QTableWidget()
-        self.table.setObjectName("modernTable")
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels([
-            "Concepto", "Categoría", f"Valor {self._get_month_name()}", "Acumulado Año", "Acciones"
-        ])
-        
-        # ✅ Agregar tooltip a columna "Acumulado Año"
-        header_item = self.table.horizontalHeaderItem(3)
-        if header_item:
-            header_item.setToolTip("Suma acumulativa de Enero hasta el mes actual (valores se arrastran mes a mes)")
-
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(4, 140)
-
-        self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.verticalHeader().setDefaultSectionSize(40)
-
-        root.addWidget(self.table)
-
-        # === TOTAL ===
-        total_card = QFrame()
-        total_card.setObjectName("totalCard")
-        total_layout = QHBoxLayout(total_card)
-        total_layout.setContentsMargins(20, 16, 20, 16)
-        total_layout.setSpacing(12)
-
-        total_lbl = QLabel(f"TOTAL ACUMULADO ({self._get_month_name().upper()}):")
-        total_lbl.setStyleSheet("font-size: 15px; font-weight: 700; color: #1E293B;")
-
-        self.label_total = QLabel("RD$ 0.00")
-        self.label_total.setStyleSheet(
-            "font-size: 20px; font-weight: 800; color: #DC2626;"
-        )
-
-        total_layout.addStretch()
-        total_layout.addWidget(total_lbl)
-        total_layout.addWidget(self.label_total)
-
-        root.addWidget(total_card)
-
-        self._apply_styles()
-        self._update_labels()
+            # Aplicar estilos y actualizar textos
+            self._apply_styles()
+            self._update_labels()
 
     def _apply_styles(self):
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #F8F9FA;
-            }
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #F8F9FA;
+                    font-family: 'Segoe UI', Inter, sans-serif;
+                }
 
-            QFrame#headerCard, QFrame#formCard {
-                background-color: #FFFFFF;
-                border-radius: 12px;
-                border: 1px solid #E5E7EB;
-            }
+                QFrame#headerCard, QFrame#formCard {
+                    background-color: #FFFFFF;
+                    border-radius: 10px;
+                    border: 1px solid #E5E7EB;
+                }
 
-            QFrame#totalCard {
-                background-color:  #FFFFFF;
-                border-radius: 12px;
-                border: 2px solid #DC2626;
-                background:  qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #FEF2F2,
-                    stop:1 #FFFFFF
-                );
-            }
+                QFrame#totalCard {
+                    background-color: #FFFFFF;
+                    border-radius: 10px;
+                    border: 2px solid #DC2626;
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FEF2F2, stop:1 #FFFFFF);
+                }
+                
+                QLabel#dialogTitle { font-size: 18px; font-weight: 700; color: #111827; }
+                QLabel#dialogSubtitle { font-size: 12px; color: #6B7280; }
+                
+                QLabel.fieldLabel { font-weight: 600; color: #4B5563; font-size: 13px; }
 
-            /* INPUTS Y COMBOS */
-            QLineEdit#modernInput, QTextEdit#modernTextEdit {
-                background-color: #FFFFFF;
-                border: 1px solid #CBD5E1;
-                border-radius: 6px;
-                padding: 8px 12px;
-                color: #0F172A;
-                font-size: 13px;
-            }
+                /* === ESTILO DEL LABEL DE MES (FONDO AZUL RESTAURADO) === */
+                QLabel#monthLabel {
+                    font-size: 14px; 
+                    font-weight: 700; 
+                    color: #1E293B;
+                    padding: 4px 10px; 
+                    background-color: #EFF6FF; /* Fondo Azul Claro */
+                    border-radius: 6px; 
+                    border: 1px solid #DBEAFE;
+                    min-height: 20px;
+                }
 
-            QLineEdit#modernInput:focus, QTextEdit#modernTextEdit:focus {
-                border-color: #3B82F6;
-                border-width: 2px;
-            }
+                /* Inputs */
+                QLineEdit#modernInput {
+                    background-color: #FFFFFF;
+                    border: 1px solid #CBD5E1;
+                    border-radius: 6px;
+                    padding: 6px 10px;
+                    color: #0F172A;
+                    font-size: 13px;
+                }
+                QLineEdit#modernInput:focus { border-color: #3B82F6; border-width: 2px; }
 
-            QComboBox#modernCombo {
-                background-color: #FFFFFF;
-                border: 1px solid #CBD5E1;
-                border-radius: 6px;
-                padding: 8px 12px;
-                color: #0F172A;
-                font-size: 13px;
-                font-weight: 500;
-            }
+                QComboBox#modernCombo {
+                    background-color: #FFFFFF;
+                    border: 1px solid #CBD5E1;
+                    border-radius: 6px;
+                    padding: 6px 10px;
+                    color: #0F172A;
+                    font-size: 13px;
+                    font-weight: 500;
+                }
+                QComboBox#modernCombo:hover { border-color: #3B82F6; }
+                QComboBox#modernCombo::drop-down { border: none; width: 30px; }
+                QComboBox#modernCombo::down-arrow {
+                    image: none;
+                    border-left: 4px solid transparent;
+                    border-right: 4px solid transparent;
+                    border-top: 6px solid #64748B;
+                    margin-right: 8px;
+                }
 
-            QComboBox#modernCombo:hover { border-color: #3B82F6; }
-            QComboBox#modernCombo::drop-down { border: none; width: 30px; }
+                /* === BOTONES PRINCIPALES (COLORES VIVOS) === */
+                QPushButton#primaryButton, 
+                QPushButton#secondaryButton, 
+                QPushButton#catalogButton, 
+                QPushButton#cancelButton {
+                    border-radius: 6px;
+                    padding: 0 16px;
+                    font-weight: 600;
+                    font-size: 13px;
+                    border: none;
+                    height: 36px;
+                    color: #FFFFFF;
+                }
 
-            QComboBox#modernCombo::down-arrow {
-                image:  none;
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
-                border-top: 6px solid #64748B;
-                margin-right: 8px;
-            }
+                QPushButton#primaryButton { background-color: #15803D; } /* Verde */
+                QPushButton#primaryButton:hover { background-color: #166534; }
 
-            QComboBox#modernCombo QAbstractItemView {
-                background-color: #FFFFFF;
-                border: 1px solid #E5E7EB;
-                selection-background-color: #EFF6FF;
-                selection-color: #1E293B;
-                color: #0F172A;
-            }
+                QPushButton#secondaryButton { background-color: #3B82F6; } /* Azul */
+                QPushButton#secondaryButton:hover { background-color: #2563EB; }
 
-            /* === BOTONES PRINCIPALES (HOMOLOGADOS) === */
-            /* Definimos la estructura base para que todos sean iguales */
-            QPushButton#primaryButton, QPushButton#secondaryButton, QPushButton#catalogButton {
-                padding: 0px 20px;
-                border-radius: 8px;
-                font-weight: 600;
-                font-size: 14px;
-                border: none;
-                min-width: 150px; /* Ancho mínimo */
-                height: 40px;     /* Alto fijo */
-                color: #FFFFFF;
-            }
+                QPushButton#catalogButton { background-color: #8B5CF6; } /* Violeta */
+                QPushButton#catalogButton:hover { background-color: #7C3AED; }
 
-            QPushButton#primaryButton { background-color: #15803D; }
-            QPushButton#primaryButton:hover { background-color: #166534; }
+                QPushButton#cancelButton { background-color: #DC2626; } /* Rojo */
+                QPushButton#cancelButton:hover { background-color: #B91C1C; }
 
-            QPushButton#secondaryButton { background-color: #3B82F6; }
-            QPushButton#secondaryButton:hover { background-color: #2563EB; }
+                /* Botones de Navegación (Flechas) */
+                QPushButton#navButton {
+                    background-color: #FFFFFF; /* Fondo Blanco */
+                    color: #374151;
+                    border: 1px solid #D1D5DB;
+                    border-radius: 6px;
+                    font-weight: 700;
+                    font-size: 14px;
+                }
+                QPushButton#navButton:hover { background-color: #F3F4F6; }
 
-            QPushButton#catalogButton { background-color: #8B5CF6; }
-            QPushButton#catalogButton:hover { background-color: #7C3AED; }
+                /* === TABLA === */
+                QTableWidget#modernTable {
+                    background-color: #FFFFFF;
+                    alternate-background-color: #F8FAFC;
+                    border: 1px solid #E5E7EB;
+                    border-radius: 8px;
+                    gridline-color: #F1F5F9;
+                    color: #0F172A;
+                }
+                QHeaderView::section {
+                    background-color: #F1F5F9;
+                    border: none;
+                    padding: 8px;
+                    color: #64748B;
+                    font-weight: 700;
+                    font-size: 11px;
+                    text-transform: uppercase;
+                    border-bottom: 1px solid #E2E8F0;
+                }
 
-            /* Botón Cancelar */
-            QPushButton#cancelButton {
-                background-color: #DC2626;
-                color: #FFFFFF;
-                padding: 0px 20px;
-                border-radius: 8px;
-                font-weight: 600;
-                font-size: 14px;
-                border: none;
-                min-width: 100px;
-                height: 40px;
-            }
-            QPushButton#cancelButton:hover { background-color: #B91C1C; }
+                /* Botones Pequeños en Tabla */
+                QPushButton#actionButton, QPushButton#deleteButton, QPushButton#historyButton {
+                    border-radius: 4px; border: none; font-size: 14px;
+                    width: 30px; height: 30px;
+                }
+                
+                QPushButton#actionButton { background-color: #EFF6FF; color: #2563EB; border: 1px solid #DBEAFE; }
+                QPushButton#actionButton:hover { background-color: #DBEAFE; }
 
-            /* Botones de Navegación */
-            QPushButton#navButton {
-                background-color:  #F9FAFB;
-                color: #374151;
-                border: 1px solid #D1D5DB;
-                border-radius: 6px;
-                padding: 6px 16px;
-                font-weight: 600;
-                font-size: 13px;
-                height: 32px;
-            }
+                QPushButton#historyButton { background-color: #F5F3FF; color: #7C3AED; border: 1px solid #DDD6FE; }
+                QPushButton#historyButton:hover { background-color: #DDD6FE; }
 
-            QPushButton#navButton:hover { background-color: #E5E7EB; }
-
-            /* Botones de Tabla */
-            QPushButton#actionButton, QPushButton#deleteButton, QPushButton#historyButton {
-                color: #FFFFFF;
-                border-radius:  6px;
-                border: none;
-                font-weight: 600;
-                font-size: 18px;
-                width: 36px;
-                height: 32px;
-            }
-
-            QPushButton#actionButton { background-color:  #3B82F6; }
-            QPushButton#actionButton:hover { background-color:  #2563EB; }
-
-            QPushButton#deleteButton { background-color:  #EF4444; }
-            QPushButton#deleteButton:hover { background-color:  #DC2626; }
-
-            QPushButton#historyButton { background-color: #8B5CF6; }
-            QPushButton#historyButton:hover { background-color:  #7C3AED; }
-
-            /* TABLA */
-            QTableWidget#modernTable {
-                background-color: #FFFFFF;
-                alternate-background-color: #F9FAFB;
-                border:  1px solid #E5E7EB;
-                border-radius: 8px;
-                gridline-color: #E5E7EB;
-                color: #0F172A;
-            }
-
-            QTableWidget#modernTable::item { padding: 8px; }
-
-            QHeaderView::section {
-                background-color: #F1F5F9;
-                border: none;
-                padding: 10px 8px;
-                color: #475569;
-                font-weight:  700;
-                font-size: 12px;
-                text-transform: uppercase;
-            }
-        """)
+                QPushButton#deleteButton { background-color: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; }
+                QPushButton#deleteButton:hover { background-color: #FECACA; }
+            """)        
 
     def _get_month_name(self):
         """Devuelve el nombre del mes actual."""
@@ -451,7 +415,7 @@ class AnnualExpensesManager(QDialog):
         self.subtitle_label.setText(
             f"{self.company_name} – Viendo valores acumulados hasta {month_name}"
         )
-        self.lbl_valor_mes.setText(f"Valor Acumulado (hasta {month_name}):")
+        self.lbl_valor_mes.setText(f"Valor Acumulado ({month_name}):")
         
         # Actualizar header de tabla
         if self.table.columnCount() >= 3:
@@ -462,11 +426,10 @@ class AnnualExpensesManager(QDialog):
                 "Acumulado Año", 
                 "Acciones"
             ])
-            
-            # ✅ Actualizar tooltip de columna "Acumulado Año"
+            # Tooltip
             header_item = self.table.horizontalHeaderItem(3)
             if header_item:
-                header_item.setToolTip(f"Suma acumulativa de Enero hasta {month_name} (valores se arrastran mes a mes)")
+                header_item.setToolTip(f"Suma acumulativa de Enero hasta {month_name}")
 
     def _prev_month(self):
         """Navega al mes anterior."""
@@ -497,7 +460,7 @@ class AnnualExpensesManager(QDialog):
         self._load_concepts()
 
     def _load_concepts(self):
-        """Carga los conceptos anuales."""
+        """Carga los conceptos anuales y corrige el cálculo de totales."""
         concepts = []
         try:
             if hasattr(self.controller, "get_annual_expense_concepts"):
@@ -510,7 +473,7 @@ class AnnualExpensesManager(QDialog):
             QMessageBox.warning(self, "Error", f"Error cargando conceptos:\n{e}")
 
         self.table.setRowCount(0)
-        total_month = 0.0
+        total_month = 0.0 # Total del mes actual, que es lo que muestra el cuadro rojo abajo
 
         for concept_data in concepts:
             row = self.table.rowCount()
@@ -520,10 +483,10 @@ class AnnualExpensesManager(QDialog):
             category = concept_data.get("category", "")
             monthly_values = concept_data.get("monthly_values", {})
 
-            # Valor del mes actual
+            # Valor mes actual (acumulativo)
             value_month = float(monthly_values.get(self.current_month_str, 0.0) or 0.0)
             
-            # Si no existe, buscar último valor anterior
+            # Arrastre de valor si es 0
             if value_month == 0.0:
                 month_int = int(self.current_month_str)
                 for m in range(month_int - 1, 0, -1):
@@ -532,25 +495,19 @@ class AnnualExpensesManager(QDialog):
                         value_month = float(monthly_values[m_str] or 0.0)
                         break
 
-            # ✅ CORREGIDO: Acumulado año = valor del mes actual (que es acumulativo)
-            # Como el sistema guarda valores acumulativos, el valor del mes actual
-            # ya ES el acumulado del año hasta ese mes
-            value_year = value_month
+            # Acumulado anual real (Suma de todos los meses)
+            value_year = sum(float(val or 0.0) for val in monthly_values.values())
 
+            # Sumar al total general del mes visible
             total_month += value_month
 
-            # Nombre
             self.table.setItem(row, 0, QTableWidgetItem(concept_name))
-
-            # Categoría
             self.table.setItem(row, 1, QTableWidgetItem(category))
 
-            # Valor mes
-            item_month = QTableWidgetItem(f"RD$ {value_month: ,.2f}")
+            item_month = QTableWidgetItem(f"RD$ {value_month:,.2f}")
             item_month.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.table.setItem(row, 2, item_month)
 
-            # Acumulado año
             item_year = QTableWidgetItem(f"RD$ {value_year:,.2f}")
             item_year.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             item_year.setForeground(QColor("#15803D"))
@@ -566,23 +523,17 @@ class AnnualExpensesManager(QDialog):
             btn_edit = QPushButton("✏️")
             btn_edit.setObjectName("actionButton")
             btn_edit.setToolTip("Editar valor del mes")
-            btn_edit.clicked.connect(
-                lambda checked, c=concept_data: self._edit_concept(c)
-            )
+            btn_edit.clicked.connect(lambda checked, c=concept_data: self._edit_concept(c))
 
             btn_history = QPushButton("📊")
             btn_history.setObjectName("historyButton")
             btn_history.setToolTip("Ver histórico mensual")
-            btn_history.clicked.connect(
-                lambda checked, c=concept_data: self._show_history(c)
-            )
+            btn_history.clicked.connect(lambda checked, c=concept_data: self._show_history(c))
 
             btn_delete = QPushButton("🗑️")
             btn_delete.setObjectName("deleteButton")
             btn_delete.setToolTip("Eliminar concepto completo")
-            btn_delete.clicked.connect(
-                lambda checked, c=concept_data: self._delete_concept(c)
-            )
+            btn_delete.clicked.connect(lambda checked, c=concept_data: self._delete_concept(c))
 
             actions_layout.addWidget(btn_edit)
             actions_layout.addWidget(btn_history)
@@ -612,14 +563,13 @@ class AnnualExpensesManager(QDialog):
         self.editing_concept_name = concept_data.get("concept")
         
         self.edit_concepto.setText(self.editing_concept_name)
-        self.edit_concepto.setEnabled(False)  # No se puede cambiar el nombre
+        self.edit_concepto.setEnabled(False) 
         
         self.combo_categoria.setCurrentText(concept_data.get("category", ""))
         
         monthly_values = concept_data.get("monthly_values", {})
         value_month = float(monthly_values.get(self.current_month_str, 0.0) or 0.0)
         
-        # Si no hay valor, buscar el anterior
         if value_month == 0.0:
             month_int = int(self.current_month_str)
             for m in range(month_int - 1, 0, -1):
@@ -632,7 +582,7 @@ class AnnualExpensesManager(QDialog):
         
         monthly_notes = concept_data.get("monthly_notes", {})
         note = monthly_notes.get(self.current_month_str, "")
-        self.edit_nota.setPlainText(note)
+        self.edit_nota.setText(note) # Usamos setText porque ahora es QLineEdit
         
         self.btn_guardar.setText("💾 Actualizar Valor")
         self.btn_cancelar.setVisible(True)
@@ -645,55 +595,35 @@ class AnnualExpensesManager(QDialog):
 
     def _save_value(self):
         """Guarda el valor acumulado del concepto para el mes actual."""
-        print("[SAVE_VALUE] ===== INICIO =====")
-        
         concept_name = self.edit_concepto.text().strip()
-        valor_str = self. edit_valor.text().strip().replace(",", "")
-        
-        print(f"[SAVE_VALUE] Concepto: {concept_name}")
-        print(f"[SAVE_VALUE] Valor string: '{valor_str}'")
+        valor_str = self.edit_valor.text().strip().replace(",", "")
         
         if not concept_name: 
-            print("[SAVE_VALUE] ❌ Concepto vacío")
             QMessageBox.warning(self, "Validación", "El concepto es obligatorio.")
             self.edit_concepto.setFocus()
             return
 
         try:
             valor = float(valor_str or 0)
-            print(f"[SAVE_VALUE] Valor parseado:  {valor}")
-            
             if valor < 0:
                 reply = QMessageBox.question(
                     self,
                     "Valor Negativo",
                     "El valor acumulado es negativo.  ¿Estás seguro?",
-                    QMessageBox. StandardButton.Yes | QMessageBox.StandardButton.No
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                 )
                 if reply != QMessageBox.StandardButton.Yes:
-                    print("[SAVE_VALUE] Usuario canceló valor negativo")
                     return
-        except ValueError as e:
-            print(f"[SAVE_VALUE] ❌ Error parseando valor:  {e}")
+        except ValueError:
             QMessageBox.warning(self, "Validación", "El valor debe ser un número válido.")
             self.edit_valor.setFocus()
             return
 
         category = self.combo_categoria.currentText().strip()
-        note = self. edit_nota.toPlainText().strip()
-        
-        print(f"[SAVE_VALUE] Categoría: {category}")
-        print(f"[SAVE_VALUE] Nota: {note}")
-        print(f"[SAVE_VALUE] Company ID: {self.company_id}")
-        print(f"[SAVE_VALUE] Año: {self.current_year_int}")
-        print(f"[SAVE_VALUE] Mes: {self.current_month_str}")
+        note = self.edit_nota.text().strip()
 
         try:
-            print("[SAVE_VALUE] Verificando método update_annual_expense_value...")
-            
             if hasattr(self.controller, "update_annual_expense_value"):
-                print("[SAVE_VALUE] ✅ Método existe, llamando...")
-                
                 ok, msg = self.controller.update_annual_expense_value(
                     self.company_id,
                     self.current_year_int,
@@ -703,8 +633,6 @@ class AnnualExpensesManager(QDialog):
                     valor,
                     note
                 )
-                
-                print(f"[SAVE_VALUE] Resultado: ok={ok}, msg={msg}")
 
                 if ok:
                     QMessageBox.information(self, "Éxito", msg)
@@ -713,23 +641,12 @@ class AnnualExpensesManager(QDialog):
                 else:
                     QMessageBox.warning(self, "Error", msg)
             else:
-                print("[SAVE_VALUE] ❌ Método NO existe en controller")
-                print(f"[SAVE_VALUE] Controller type: {type(self.controller)}")
-                print(f"[SAVE_VALUE] Métodos con 'annual': {[m for m in dir(self.controller) if 'annual' in m. lower()]}")
-                
-                QMessageBox.critical(
-                    self,
-                    "Error",
-                    "Método update_annual_expense_value no implementado en el controller."
-                )
+                QMessageBox.critical(self, "Error", "Controller no implementado.")
 
         except Exception as e:
-            print(f"[SAVE_VALUE] ❌ EXCEPCIÓN: {e}")
             import traceback
-            traceback. print_exc()
+            traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Error al guardar:\n{e}")
-        
-        print("[SAVE_VALUE] ===== FIN =====")
 
     def _delete_concept(self, concept_data):
         """Elimina un concepto anual completo."""
@@ -756,11 +673,7 @@ class AnnualExpensesManager(QDialog):
                     else:
                         QMessageBox.warning(self, "Error", msg)
                 else:
-                    QMessageBox.critical(
-                        self,
-                        "Error",
-                        "Método delete_annual_expense_concept no implementado."
-                    )
+                    QMessageBox.critical(self, "Error", "Método no implementado.")
 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Error al eliminar:\n{e}")
@@ -800,7 +713,6 @@ class AnnualExpensesManager(QDialog):
             value = float(monthly_values.get(month_str, 0.0) or 0.0)
             note = monthly_notes.get(month_str, "")
 
-            # Si no hay valor, buscar el anterior
             if value == 0.0 and month > 1:
                 for m in range(month - 1, 0, -1):
                     m_str = f"{m:02d}"
@@ -838,20 +750,11 @@ class AnnualExpensesManager(QDialog):
             )
             
             if dlg.exec():
-                # Recargar conceptos después de agregar desde catálogo
                 self._load_concepts()
         
         except ImportError as e:
-            QMessageBox.critical(
-                self,
-                "Error",
-                f"No se pudo cargar el diálogo del catálogo:\n{e}\n\nAsegúrate de que concept_catalog_dialog.py existe."
-            )
+            QMessageBox.critical(self, "Error", f"No se pudo cargar el catálogo:\n{e}")
         except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Error",
-                f"Error al abrir el catálogo:\n{e}"
-            )
             import traceback
             traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Error al abrir catálogo:\n{e}")
