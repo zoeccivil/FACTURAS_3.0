@@ -196,43 +196,55 @@ class ModernPDF(FPDF):
         self.cell(w, h, text, 0, 0, 'C')
         
     def header(self):
-        # Header Moderno Limpio
+        # Header Moderno Limpio - Mejorado para evitar solapamientos
         if self.page_no() == 1:
             # Logo placeholder (cuadrado oscuro)
             self.set_fill_color_rgb(COLORS['slate_900'])
             self.rounded_rect(15, 12, 10, 10, 2, 'F')
             
-            # Título App
+            # Calcular ancho disponible para textos (mitad de página cada uno)
+            page_width = self.w - 30  # Total width minus margins
+            left_width = page_width * 0.55  # 55% for left side
+            right_width = page_width * 0.45  # 45% for right side
+            
+            # Título App (lado izquierdo)
             self.set_xy(28, 12)
             self.set_font('Arial', 'B', 14)
             self.set_text_color_rgb(COLORS['slate_900'])
-            self.cell(0, 6, "Gestión Facturas PRO", 0, 1, 'L')
+            self.cell(left_width, 6, "Gestión Facturas PRO", 0, 0, 'L')
             
-            # Subtítulo Reporte
-            self.set_xy(28, 18)
-            self.set_font('Arial', '', 10)
-            self.set_text_color_rgb(COLORS['slate_500'])
-            self.cell(0, 5, self.report_title, 0, 1, 'L')
+            # Bloque Derecho - Empieza desde la posición calculada
+            right_start_x = 28 + left_width + 5
             
-            # Bloque Derecho (Periodo/Empresa)
-            self.set_y(12)
+            # Label "EMPRESA / PERIODO"
+            self.set_xy(right_start_x, 12)
             self.set_font('Arial', 'B', 8)
             self.set_text_color_rgb(COLORS['slate_400'])
-            self.cell(0, 4, "EMPRESA / PERIODO", 0, 1, 'R')
+            self.cell(right_width, 4, "EMPRESA / PERIODO", 0, 1, 'R')
             
+            # Subtítulo Reporte (lado izquierdo)
+            self.set_xy(28, 19)
+            self.set_font('Arial', '', 10)
+            self.set_text_color_rgb(COLORS['slate_500'])
+            self.cell(left_width, 5, self.report_title[:45], 0, 0, 'L')
+            
+            # Nombre Empresa (lado derecho)
+            self.set_xy(right_start_x, 17)
             self.set_font('Arial', 'B', 10)
             self.set_text_color_rgb(COLORS['slate_800'])
-            self.cell(0, 5, self.company_name[:40], 0, 1, 'R')
+            self.cell(right_width, 5, self.company_name[:35], 0, 1, 'R')
             
+            # Periodo (lado derecho)
+            self.set_xy(right_start_x, 23)
             self.set_font('Arial', '', 9)
             self.set_text_color_rgb(COLORS['slate_500'])
-            self.cell(0, 5, self.report_period, 0, 1, 'R')
+            self.cell(right_width, 5, self.report_period, 0, 1, 'R')
             
             # Línea separadora
-            self.ln(5)
+            self.set_y(30)
             self.set_draw_color_rgb(COLORS['slate_200'])
-            self.line(15, self.get_y(), self.w - 15, self.get_y())
-            self.ln(8)
+            self.line(15, 30, self.w - 15, 30)
+            self.ln(6)
         else:
             # Header simplificado páginas siguientes
             self.set_font('Arial', 'I', 8)
@@ -462,51 +474,80 @@ def generate_professional_pdf(report_data, save_path, company_name, month, year,
                     except: pass
             return n
 
-        # ✅ Datos Facturas Emitidas - FECHA CORREGIDA
+        # ✅ Datos Facturas Emitidas - ITBIS corregido sin doble multiplicación
         inv_emitted = _safe_list(report_data. get('emitted_invoices', []))
         data_em = []
         for f in inv_emitted:
-            rate = float(f.get('exchange_rate', 1.0) or 1.0)
-            itbis = float(f.get('itbis', 0.0)) * rate
-            total = float(f.get('total_amount_rd') or (float(f.get('total_amount', 0.0)) * rate))
+            # Obtener valores ya convertidos a RD$ (sin multiplicar nuevamente)
+            # Priorizar campos _rd que ya están en pesos dominicanos
+            itbis_rd = float(f.get('itbis_rd') or f.get('itbis', 0.0) or 0.0)
+            total_rd = float(f.get('total_amount_rd') or f.get('total_amount', 0.0) or 0.0)
+            
+            # Obtener moneda y valores originales para mostrar
+            currency = f.get('currency', 'RD$')
+            itbis_orig = f.get('itbis_original_currency')
+            total_orig = f.get('total_amount_original_currency')
+            
+            # Si hay moneda extranjera, mostrar ambos valores
+            if currency not in ['RD$', 'DOP'] and itbis_orig is not None:
+                itbis_display = f"{currency} {float(itbis_orig):,.2f} / RD$ {itbis_rd:,.2f}"
+                total_display = f"{currency} {float(total_orig):,.2f} / RD$ {total_rd:,.2f}"
+            else:
+                itbis_display = f"RD$ {itbis_rd:,.2f}"
+                total_display = f"RD$ {total_rd:,.2f}"
+            
             data_em.append([
-                format_date_for_report(f.get('invoice_date')),  # ✅ CORREGIDO
+                format_date_for_report(f.get('invoice_date')),
                 f.get('invoice_number', ''),
-                f.get('third_party_name', '')[: 30],
-                f"{itbis:,.2f}",
-                f"{total:,.2f}"
+                f.get('third_party_name', '')[: 25],
+                itbis_display,
+                total_display
             ])
             
         draw_modern_table(
             "Últimas Facturas Emitidas",
-            ['Fecha', 'NCF', 'Cliente', 'ITBIS', 'Total (RD$)'],
+            ['Fecha', 'NCF', 'Cliente', 'ITBIS', 'Total'],
             data_em,
-            [15, 20, 35, 15, 15],
+            [12, 18, 25, 22, 23],
             COLORS['emerald_500']
         )
         
         pdf.ln(8)
         
-        # ✅ Datos Gastos - FECHA CORREGIDA
+        # ✅ Datos Gastos - ITBIS corregido sin doble multiplicación
         inv_expenses = _safe_list(report_data.get('expense_invoices', []))
         data_ex = []
         for f in inv_expenses:
-            rate = float(f.get('exchange_rate', 1.0) or 1.0)
-            itbis = float(f.get('itbis', 0.0)) * rate
-            total = float(f.get('total_amount_rd') or (float(f.get('total_amount', 0.0)) * rate))
+            # Obtener valores ya convertidos a RD$ (sin multiplicar nuevamente)
+            itbis_rd = float(f.get('itbis_rd') or f.get('itbis', 0.0) or 0.0)
+            total_rd = float(f.get('total_amount_rd') or f.get('total_amount', 0.0) or 0.0)
+            
+            # Obtener moneda y valores originales
+            currency = f.get('currency', 'RD$')
+            itbis_orig = f.get('itbis_original_currency')
+            total_orig = f.get('total_amount_original_currency')
+            
+            # Si hay moneda extranjera, mostrar ambos valores
+            if currency not in ['RD$', 'DOP'] and itbis_orig is not None:
+                itbis_display = f"{currency} {float(itbis_orig):,.2f} / RD$ {itbis_rd:,.2f}"
+                total_display = f"{currency} {float(total_orig):,.2f} / RD$ {total_rd:,.2f}"
+            else:
+                itbis_display = f"RD$ {itbis_rd:,.2f}"
+                total_display = f"RD$ {total_rd:,.2f}"
+            
             data_ex. append([
-                format_date_for_report(f.get('invoice_date')),  # ✅ CORREGIDO
+                format_date_for_report(f.get('invoice_date')),
                 f.get('invoice_number', ''),
-                f.get('third_party_name', '')[:30],
-                f"{itbis:,.2f}",
-                f"{total:,.2f}"
+                f.get('third_party_name', '')[:25],
+                itbis_display,
+                total_display
             ])
             
         draw_modern_table(
             "Gastos Registrados",
-            ['Fecha', 'NCF', 'Proveedor', 'ITBIS', 'Total (RD$)'],
+            ['Fecha', 'NCF', 'Proveedor', 'ITBIS', 'Total'],
             data_ex,
-            [15, 20, 35, 15, 15],
+            [12, 18, 25, 22, 23],
             COLORS['red_500']
         )
 
