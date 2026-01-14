@@ -618,14 +618,18 @@ class AnnualExpensesManager(QDialog):
             item_var = QTableWidgetItem(f"RD$ {variation:,.2f}")
             item_var.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             # Color según variación: Verde si disminuyó (positivo), Rojo si aumentó (negativo), Azul si cero
+            # Usar tanto foreground como background para que el CSS no lo sobrescriba
             if variation > 0:
                 item_var.setForeground(QColor("#10B981"))  # Verde (disminuyó el gasto - positivo)
+                item_var.setBackground(QColor("#F0FDF4"))  # Fondo verde claro
                 item_var.setFont(QFont("Arial", 10, QFont.Weight.Bold))
             elif variation < 0:
                 item_var.setForeground(QColor("#EF4444"))  # Rojo (aumentó el gasto - negativo)
+                item_var.setBackground(QColor("#FEF2F2"))  # Fondo rojo claro
                 item_var.setFont(QFont("Arial", 10, QFont.Weight.Bold))
             else:
                 item_var.setForeground(QColor("#3B82F6"))  # Azul (sin cambio)
+                item_var.setBackground(QColor("#EFF6FF"))  # Fondo azul claro
                 item_var.setFont(QFont("Arial", 10, QFont.Weight.Bold))
             self.table.setItem(row, 4, item_var)
 
