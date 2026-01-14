@@ -1081,21 +1081,21 @@ def generate_tax_calculation_pdf(report_data, output_path):
             # ✅ Usar valores ya convertidos a RD$ (NO multiplicar por rate otra vez)
             total_imp_rd = total_impuestos_row_orig * rate
 
-            currency_totals. setdefault(currency, 0.0)
+            currency_totals.setdefault(currency, 0.0)
             currency_totals[currency] += total_impuestos_row_orig
             grand_total_rd += total_imp_rd
 
             # ✅ FECHA CORREGIDA
             selected_invoices_data.append({
-                "fecha": format_date_for_report(inv.get("invoice_date")),  # ✅ CORREGIDO
-                "no_fact":  str(inv.get("invoice_number", "")),
+                "fecha": format_date_for_report(inv.get("invoice_date")),
+                "no_fact": str(inv.get("invoice_number", "")),
                 "empresa": str(inv.get("third_party_name", "")),
                 "currency": currency,
                 "exchange_rate": rate,
                 "total_orig": total_orig,
                 "total_rd": total_rd,
                 "total_imp_orig": total_impuestos_row_orig,
-                "total_imp_rd":  total_imp_rd,
+                "total_imp_rd": total_imp_rd,
             })
 
         summary_data = {
