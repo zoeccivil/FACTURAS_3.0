@@ -3486,6 +3486,235 @@ class LogicControllerFirebase:
         return summary
 
     # ========================================================================
+    # GESTIÓN DE INGRESOS ADICIONALES (Paralelo a gastos, pero SUMA en lugar de restar)
+    # ========================================================================
+
+    def get_annual_income_concepts(
+        self, company_id: int, year: int
+    ) -> list[dict]:
+        """
+        Obtiene todos los conceptos de ingresos adicionales del año especificado.
+        Similar a get_annual_expense_concepts pero para ingresos.
+        """
+        if not self._db or not company_id:
+            return []
+
+        try:
+            concepts_ref = (
+                self._db.collection("companies")
+                .document(str(company_id))
+                .collection("annual_additional_income")
+            )
+            
+            docs = concepts_ref.stream()
+            result = []
+            for doc in docs:
+                data = doc.to_dict()
+                data["id"] = doc.id
+                result.append(data)
+            
+            return result
+        except Exception as e:
+            print(f"Error al obtener conceptos de ingresos: {e}")
+            return []
+
+    def create_annual_income_concept(
+        self,
+        company_id: int,
+        year: int,
+        month_str: str,
+        name: str,
+        category: str = "",
+        description: str = "",
+        initial_value: float = 0.0,
+    ):
+        """
+        Crea un nuevo concepto de ingreso adicional.
+        Similar a create_annual_expense_concept.
+        """
+        if not self._db or not company_id:
+            raise Exception("Base de datos no disponible")
+
+        concepts_ref = (
+            self._db.collection("companies")
+            .document(str(company_id))
+            .collection("annual_additional_income")
+        )
+
+        # Calcular valor acumulado
+        current_month_int = int(month_str)
+        months_data = {}
+        accumulated_value = 0.0
+        
+        for m in range(1, 13):
+            m_str = f"{m:02d}"
+            if m <= current_month_int:
+                accumulated_value += initial_value
+            months_data[m_str] = accumulated_value
+
+        doc_data = {
+            "name": name,
+            "category": category,
+            "description": description,
+            "months": {str(year): months_data}
+        }
+
+        concepts_ref.add(doc_data)
+
+    def update_annual_income_value(
+        self,
+        company_id: int,
+        year: int,
+        month_str: str,
+        concept_id: str,
+        new_value: float,
+    ):
+        """
+        Actualiza el valor de un ingreso adicional para un mes específico (acumulativo).
+        Similar a update_annual_expense_value.
+        """
+        if not self._db or not company_id:
+            raise Exception("Base de datos no disponible")
+
+        concept_ref = (
+            self._db.collection("companies")
+            .document(str(company_id))
+            .collection("annual_additional_income")
+            .document(concept_id)
+        )
+
+        doc = concept_ref.get()
+        if not doc.exists:
+            raise Exception("Concepto no encontrado")
+
+        data = doc.to_dict()
+        months_data = data.get("months", {}).get(str(year), {})
+
+        # Recalcular acumulados
+        current_month_int = int(month_str)
+        prev_accumulated = 0.0
+        
+        if current_month_int > 1:
+            prev_month_str = f"{current_month_int - 1:02d}"
+            prev_accumulated = months_data.get(prev_month_str, 0.0)
+
+        # Nuevo valor acumulado
+        new_accumulated = prev_accumulated + new_value
+
+        # Actualizar meses desde el actual hacia adelante
+        for m in range(current_month_int, 13):
+            m_str = f"{m:02d}"
+            if m == current_month_int:
+                months_data[m_str] = new_accumulated
+            else:
+                # Propagar diferencia
+                old_val = months_data.get(m_str, 0.0)
+                if old_val > 0:
+                    old_base = months_data.get(f"{current_month_int - 1:02d}", 0.0) if current_month_int > 1 else 0.0
+                    diff = old_val - old_base
+                    months_data[m_str] = new_accumulated + diff
+                else:
+                    months_data[m_str] = new_accumulated
+
+        # Guardar
+        if "months" not in data:
+            data["months"] = {}
+        data["months"][str(year)] = months_data
+
+        concept_ref.set(data)
+
+    def delete_annual_income_concept(self, company_id: int, concept_id: str):
+        """
+        Elimina un concepto de ingreso adicional.
+        """
+        if not self._db or not company_id:
+            raise Exception("Base de datos no disponible")
+
+        concept_ref = (
+            self._db.collection("companies")
+            .document(str(company_id))
+            .collection("annual_additional_income")
+            .document(concept_id)
+        )
+
+        concept_ref.delete()
+
+    def get_annual_income_summary(
+        self, company_id: int, year: int
+    ) -> dict:
+        """
+        Obtiene resumen de ingresos adicionales por mes (12 meses + gran total).
+        Similar a get_annual_expense_summary.
+        """
+        if not self._db or not company_id:
+            return {
+                "concepts": [],
+                "monthly_totals": [0.0] * 12,
+                "grand_total": 0.0
+            }
+
+        concepts = self.get_annual_income_concepts(company_id, year)
+        
+        summary = {
+            "concepts": [],
+            "monthly_totals": [0.0] * 12,
+            "grand_total": 0.0
+        }
+
+        for concept in concepts:
+            name = concept.get("name", "")
+            monthly_values = concept.get("months", {}).get(str(year), {})
+            
+            values = []
+            for m in range(1, 13):
+                m_str = f"{m:02d}"
+                val = float(monthly_values.get(m_str, 0.0) or 0.0)
+                values.append(val)
+            
+            # Total año: máximo acumulado (no diciembre que podría ser 0)
+            total_year = max(values) if values else 0.0
+            
+            summary["concepts"].append({
+                "name": name,
+                "category": concept.get("category", ""),
+                "values": values,
+                "total_year": total_year
+            })
+            
+            # Sumar a totales mensuales
+            for i, val in enumerate(values):
+                summary["monthly_totals"][i] += val
+        
+        # Gran total como máximo acumulado
+        summary["grand_total"] = max(summary["monthly_totals"]) if summary["monthly_totals"] else 0.0
+        
+        return summary
+
+    def get_income_value_for_month(
+        self, company_id: int, year: int, month_str: str
+    ) -> float:
+        """
+        Obtiene el total de ingresos adicionales para un mes específico.
+        Similar a get_expense_value_for_month.
+        """
+        if not self._db or not company_id:
+            return 0.0
+
+        try:
+            concepts = self.get_annual_income_concepts(company_id, year)
+            total = 0.0
+            
+            for concept in concepts:
+                monthly_values = concept.get("months", {}).get(str(year), {})
+                value = float(monthly_values.get(month_str, 0.0) or 0.0)
+                total += value
+            
+            return total
+        except Exception as e:
+            print(f"Error al obtener ingresos del mes: {e}")
+            return 0.0
+
+    # ========================================================================
     # COMPATIBILIDAD CON SISTEMA ANTERIOR (get_profit_summary)
     # ========================================================================
 
@@ -3545,8 +3774,19 @@ class LogicControllerFirebase:
             elif tipo == "gasto":
                 total_expense += total_rd
         
-        print(f"[PROFIT_SUMMARY] Ingresos: RD$ {total_income:,.2f}")
+        print(f"[PROFIT_SUMMARY] Ingresos facturas: RD$ {total_income:,.2f}")
         print(f"[PROFIT_SUMMARY] Gastos facturas: RD$ {total_expense:,.2f}")
+
+        # ✅ NUEVO: Obtener ingresos adicionales acumulativos
+        additional_income = 0.0
+        if year_int and month_str:
+            additional_income = self.get_income_value_for_month(
+                company_id=company_id,
+                year=year_int,
+                month_str=month_str
+            )
+        
+        print(f"[PROFIT_SUMMARY] Ingresos adicionales acumulativos: RD$ {additional_income:,.2f}")
 
         # ✅ NUEVO: Obtener gastos acumulativos en lugar de gastos simples
         additional_expenses = 0.0
@@ -3559,7 +3799,8 @@ class LogicControllerFirebase:
         
         print(f"[PROFIT_SUMMARY] Gastos adicionales acumulativos: RD$ {additional_expenses:,.2f}")
 
-        net_profit = total_income - total_expense - additional_expenses
+        # ✅ NUEVA FÓRMULA: (Ingresos Facturados + Ingresos Adicionales) - (Gastos Facturados + Gastos Adicionales)
+        net_profit = (total_income + additional_income) - (total_expense + additional_expenses)
         
         print(f"[PROFIT_SUMMARY] Utilidad neta: RD$ {net_profit:,.2f}")
         print(f"[PROFIT_SUMMARY] ===== FIN =====")
@@ -3567,6 +3808,7 @@ class LogicControllerFirebase:
         return {
             "total_income": total_income,
             "total_expense": total_expense,
+            "additional_income": additional_income,  # ✅ NUEVO
             "additional_expenses": additional_expenses,
             "net_profit": net_profit,
         }
