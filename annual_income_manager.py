@@ -66,6 +66,7 @@ class AnnualIncomeManager(QDialog):
 
         self._build_ui()
         self._load_concepts()
+        self._update_calculator()
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -183,6 +184,54 @@ class AnnualIncomeManager(QDialog):
         form_layout.addLayout(btn_layout, row, 0, 1, 4)
 
         root.addWidget(form_card)
+
+        # === CALCULADORA DE BRECHA (GAP CALCULATOR) ===
+        calc_card = QFrame()
+        calc_card.setObjectName("calcCard")
+        calc_layout = QVBoxLayout(calc_card)
+        calc_layout.setContentsMargins(16, 12, 16, 12)
+        calc_layout.setSpacing(8)
+        
+        calc_title = QLabel("🧮 Calculadora de Ajuste de Ingresos")
+        calc_title.setObjectName("calcTitle")
+        calc_layout.addWidget(calc_title)
+        
+        calc_grid = QGridLayout()
+        calc_grid.setHorizontalSpacing(12)
+        calc_grid.setVerticalSpacing(8)
+        
+        # Fila 1: Ingreso Facturado (lectura)
+        calc_grid.addWidget(QLabel("Ingreso Facturado:"), 0, 0)
+        self.calc_invoiced = QLineEdit()
+        self.calc_invoiced.setObjectName("calcReadOnly")
+        self.calc_invoiced.setReadOnly(True)
+        self.calc_invoiced.setPlaceholderText("RD$ 0.00")
+        calc_grid.addWidget(self.calc_invoiced, 0, 1)
+        
+        # Fila 2: Ingreso Real Objetivo (input)
+        calc_grid.addWidget(QLabel("Ingreso Real Total:"), 1, 0)
+        self.calc_real_input = QLineEdit()
+        self.calc_real_input.setObjectName("inputField")
+        self.calc_real_input.setPlaceholderText("Ej: 650000.00")
+        self.calc_real_input.textChanged.connect(self._on_calc_real_changed)
+        calc_grid.addWidget(self.calc_real_input, 1, 1)
+        
+        # Fila 3: Diferencia Calculada (resultado)
+        calc_grid.addWidget(QLabel("Diferencia (Ajuste):"), 2, 0)
+        self.calc_difference = QLineEdit()
+        self.calc_difference.setObjectName("calcResult")
+        self.calc_difference.setReadOnly(True)
+        self.calc_difference.setPlaceholderText("RD$ 0.00")
+        calc_grid.addWidget(self.calc_difference, 2, 1)
+        
+        # Botón "Usar este valor"
+        self.btn_apply_calc = QPushButton("⬇ Usar este valor")
+        self.btn_apply_calc.setObjectName("applyButton")
+        self.btn_apply_calc.clicked.connect(self._apply_calculated_difference)
+        calc_grid.addWidget(self.btn_apply_calc, 2, 2)
+        
+        calc_layout.addLayout(calc_grid)
+        root.addWidget(calc_card)
 
         # === TABLA ===
         table_card = QFrame()
@@ -453,6 +502,57 @@ class AnnualIncomeManager(QDialog):
             QPushButton:hover {
                 background-color: #166534;
             }
+            
+            #calcCard {
+                background-color: #F0FDF4;
+                border: 2px solid #86EFAC;
+                border-radius: 8px;
+                padding: 12px;
+            }
+            
+            #calcTitle {
+                font-size: 14px;
+                font-weight: 600;
+                color: #15803D;
+            }
+            
+            #calcReadOnly {
+                background-color: #E0F2FE;
+                border: 1px solid #BAE6FD;
+                border-radius: 6px;
+                padding: 8px;
+                font-size: 13px;
+                color: #0C4A6E;
+                font-weight: 600;
+            }
+            
+            #calcResult {
+                background-color: #FEF3C7;
+                border: 2px solid #FCD34D;
+                border-radius: 6px;
+                padding: 8px;
+                font-size: 14px;
+                color: #92400E;
+                font-weight: bold;
+            }
+            
+            #applyButton {
+                background-color: #15803D;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: 600;
+                font-size: 12px;
+            }
+            
+            #applyButton:hover {
+                background-color: #166534;
+            }
+            
+            #applyButton:pressed {
+                background-color: #14532D;
+            }
         """)
 
     def _update_labels(self):
@@ -495,6 +595,7 @@ class AnnualIncomeManager(QDialog):
         
         self._update_labels()
         self._load_concepts()
+        self._update_calculator()
 
     def _next_month(self):
         """Navega al mes siguiente."""
@@ -507,6 +608,84 @@ class AnnualIncomeManager(QDialog):
         
         self._update_labels()
         self._load_concepts()
+        self._update_calculator()
+    
+    def _update_calculator(self):
+        """Actualiza el campo de ingreso facturado al cambiar de mes."""
+        try:
+            # Obtener summary del mes/año actual
+            summary = self.controller.get_profit_summary(
+                company_id=self.company_id,
+                month_str=self.current_month_str,
+                year_int=self.current_year_int
+            )
+            
+            # Extraer ingreso facturado
+            total_invoiced = summary.get("total_income", 0.0)
+            
+            # Actualizar campo
+            self.calc_invoiced.setText(f"RD$ {total_invoiced:,.2f}")
+            
+            # Limpiar los otros campos al cambiar de mes
+            self.calc_real_input.clear()
+            self.calc_difference.clear()
+            
+        except Exception as e:
+            print(f"[CALCULATOR] Error al actualizar calculadora: {str(e)}")
+            self.calc_invoiced.setText("RD$ 0.00")
+    
+    def _on_calc_real_changed(self):
+        """Calcula la diferencia automáticamente cuando el usuario escribe."""
+        try:
+            # Obtener ingreso facturado
+            invoiced_text = self.calc_invoiced.text().replace("RD$ ", "").replace(",", "")
+            invoiced = float(invoiced_text) if invoiced_text else 0.0
+            
+            # Obtener ingreso real
+            real_text = self.calc_real_input.text().strip().replace(",", "")
+            if not real_text:
+                self.calc_difference.clear()
+                return
+            
+            real = float(real_text)
+            
+            # Calcular diferencia
+            difference = real - invoiced
+            
+            # Actualizar campo resultado
+            self.calc_difference.setText(f"RD$ {difference:,.2f}")
+            
+        except ValueError:
+            self.calc_difference.setText("Valor inválido")
+        except Exception as e:
+            print(f"[CALCULATOR] Error al calcular: {str(e)}")
+            self.calc_difference.clear()
+    
+    def _apply_calculated_difference(self):
+        """Copia la diferencia calculada al campo de valor principal."""
+        try:
+            diff_text = self.calc_difference.text().replace("RD$ ", "").replace(",", "")
+            if not diff_text or diff_text == "Valor inválido":
+                QMessageBox.warning(self, "Aviso", "No hay diferencia calculada para aplicar.")
+                return
+            
+            # Copiar al campo principal
+            self.input_value.setText(diff_text)
+            
+            QMessageBox.information(
+                self, 
+                "Valor Aplicado", 
+                f"El valor de ajuste ({diff_text}) ha sido copiado al campo 'Valor Mes'.\n\n"
+                "Ahora puede ingresar el concepto y guardar."
+            )
+            
+            # Dar foco al campo de concepto si está vacío
+            if not self.input_name.text().strip():
+                self.input_name.setFocus()
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error al aplicar valor: {str(e)}")
+
 
     def _load_concepts(self):
         """Carga conceptos y calcula totales."""
