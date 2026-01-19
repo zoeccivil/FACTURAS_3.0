@@ -698,12 +698,32 @@ class JournalEntryFormDialog(QDialog):
 
     def _save_entry(self):
         """Guarda el asiento contable."""
-        # Validaciones básicas
-        description = self.desc_edit.  toPlainText().strip()
-        if not description: 
-            QMessageBox.warning(self, "Validación", "La descripción es obligatoria.")
-            return
+        # ========================================
+        # VALIDACIÓN 1: Descripción (CORREGIDA)
+        # ========================================
+        description = ""
+        if hasattr(self, 'desc_edit') and self.desc_edit is not None:
+            try:
+                description = self.desc_edit.toPlainText().strip()
+            except Exception as e:
+                print(f"[JOURNAL_ENTRY] Error leyendo descripción: {e}")
+                description = ""
+        
+        # ✅ CORRECCIÓN: Si está vacía, usar referencia o fecha como fallback
+        reference = self.ref_edit.text().strip()
+        
+        if not description:
+            if reference:
+                description = f"Asiento {reference}"
+            else:
+                entry_date = self.date_edit.date().toPyDate()
+                description = f"Asiento contable del {entry_date. strftime('%d/%m/%Y')}"
+        
+        print(f"[JOURNAL_ENTRY] Descripción final: '{description}'")
 
+        # ========================================
+        # VALIDACIÓN 2: Mínimo 2 líneas
+        # ========================================
         if self.lines_table.rowCount() < 2:
             QMessageBox.warning(
                 self,
@@ -712,16 +732,18 @@ class JournalEntryFormDialog(QDialog):
             )
             return
 
-        # Recolectar líneas y validar
+        # ========================================
+        # RECOLECCIÓN Y VALIDACIÓN DE LÍNEAS
+        # ========================================
         lines = []
         total_debit = 0.0
         total_credit = 0.0
 
-        for row in range(self.  lines_table.rowCount()):
+        for row in range(self. lines_table.rowCount()):
             # Cuenta
             combo_account = self.lines_table.cellWidget(row, 0)
             if not combo_account or combo_account.currentIndex() == 0:
-                QMessageBox. warning(
+                QMessageBox.warning(
                     self,
                     "Validación",
                     f"La línea {row + 1} no tiene cuenta seleccionada."
@@ -732,16 +754,16 @@ class JournalEntryFormDialog(QDialog):
             account_id = account.get("account_code", "")
             account_name = account.get("account_name", "")
 
-            # Descripción
+            # Descripción de línea
             desc_widget = self.lines_table.cellWidget(row, 1)
             line_desc = desc_widget.text().strip() if desc_widget else ""
 
             # Débito
-            debit_widget = self.lines_table. cellWidget(row, 2)
+            debit_widget = self. lines_table.cellWidget(row, 2)
             debit = 0.0
             if debit_widget: 
                 try:
-                    debit_text = debit_widget.text().strip().replace(",", "")
+                    debit_text = debit_widget. text().strip().replace(",", "")
                     debit = float(debit_text) if debit_text else 0.0
                 except ValueError:
                     pass
@@ -751,7 +773,7 @@ class JournalEntryFormDialog(QDialog):
             credit = 0.0
             if credit_widget:
                 try:
-                    credit_text = credit_widget. text().strip().replace(",", "")
+                    credit_text = credit_widget.text().strip().replace(",", "")
                     credit = float(credit_text) if credit_text else 0.0
                 except ValueError:
                     pass
@@ -785,7 +807,9 @@ class JournalEntryFormDialog(QDialog):
                 "description": line_desc or description,
             })
 
-        # Validar balance
+        # ========================================
+        # VALIDACIÓN 3: Balance de partida doble
+        # ========================================
         if abs(total_debit - total_credit) >= 0.01:
             QMessageBox.warning(
                 self,
@@ -793,18 +817,18 @@ class JournalEntryFormDialog(QDialog):
                 f"El asiento no cuadra:\n\n"
                 f"Débito: RD$ {total_debit:,.2f}\n"
                 f"Crédito: RD$ {total_credit:,.2f}\n"
-                f"Diferencia:   RD$ {abs(total_debit - total_credit):,.2f}\n\n"
+                f"Diferencia:  RD$ {abs(total_debit - total_credit):,.2f}\n\n"
                 f"Débito debe ser igual a Crédito."
             )
             return
 
-        # Obtener datos generales
+        # ========================================
+        # GUARDAR EN FIREBASE
+        # ========================================
         entry_date = self.date_edit.date().toPyDate()
-        reference = self.ref_edit.text().strip()
 
-        # Guardar en Firebase
-        try: 
-            if hasattr(self. controller, "create_journal_entry"):
+        try:
+            if hasattr(self.controller, "create_journal_entry"):
                 ok, msg = self.controller.create_journal_entry(
                     self. company_id,
                     entry_date,
@@ -818,14 +842,14 @@ class JournalEntryFormDialog(QDialog):
                         self,
                         "Éxito",
                         f"{msg}\n\n"
-                        f"Débito: RD$ {total_debit:,.2f}\n"
-                        f"Crédito:   RD$ {total_credit:,.2f}"
+                        f"Débito: RD$ {total_debit: ,.2f}\n"
+                        f"Crédito:  RD$ {total_credit: ,.2f}"
                     )
                     self.accept()
                 else:
                     QMessageBox.warning(self, "Error", msg)
             else:
-                QMessageBox. critical(
+                QMessageBox.critical(
                     self,
                     "Error",
                     "Método create_journal_entry no implementado en el controller."
@@ -834,4 +858,4 @@ class JournalEntryFormDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error al guardar asiento:\n{e}")
             import traceback
-            traceback.  print_exc()
+            traceback.print_exc()

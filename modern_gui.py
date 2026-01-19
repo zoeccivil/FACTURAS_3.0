@@ -2077,26 +2077,39 @@ class ModernMainWindow(QMainWindow):
 
 
         
-    def _open_generate_entries_dialog(self):
-        """Abre diálogo de generación de asientos."""
+    def _open_generate_entries_dialog(self, company_id, company_name: str):
+        """Abre el diálogo de generación de asientos desde facturas."""
         try:
             from accounting.generate_entries_from_invoices import GenerateEntriesFromInvoicesDialog
             
             dlg = GenerateEntriesFromInvoicesDialog(
                 parent=self,
                 controller=self.controller,
-                company_id=self.controller.active_company_id,
-                company_name=self. controller.active_company_name or "Empresa"
+                company_id=company_id,
+                company_name=company_name
             )
             dlg.exec()
             
-        except ImportError as e:
+            # Refrescar dashboard después de generar asientos
+            if hasattr(self, 'refresh_dashboard'):
+                self.refresh_dashboard()
+                
+        except ImportError as e: 
             QMessageBox.critical(
                 self,
                 "Error",
-                f"No se pudo cargar el diálogo:\n{e}"
-        )
-
+                f"No se pudo cargar el diálogo de generación:\n{e}\n\n"
+                "Asegúrate de tener el archivo:\n"
+                "accounting/generate_entries_from_invoices.py"
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Error al abrir generador de asientos:\n{e}"
+            )
+            import traceback
+            traceback.print_exc()
 
 
 
