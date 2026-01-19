@@ -584,6 +584,10 @@ class ModernMainWindow(QMainWindow):
         self._add_nav_button(
             sidebar_layout, "fa5s.book", "Contabilidad", "accounting"
         )
+        # ✅ NUEVO: Botón de Optimizador Financiero
+        self._add_nav_button(
+            sidebar_layout, "fa5s.chart-bar", "Optimizador\nFinanciero", "financial_optimizer"
+        )
         self._add_nav_button(
             sidebar_layout, "fa5s.chart-line", "Reportes", "reportes"
         )
@@ -734,9 +738,9 @@ class ModernMainWindow(QMainWindow):
         content_layout.addWidget(tx_header_widget)
 
         # Transactions table
-        self.table = QTableWidget(0, 6)
+        self.table = QTableWidget(0, 9)  # ✅ Aumentado de 6 a 9 columnas
         self.table.setHorizontalHeaderLabels(
-            ["Fecha", "Tipo", "No. Factura", "Empresa / Tercero", "ITBIS", "Total"]
+            ["Fecha", "Tipo", "No. Factura", "Empresa / Tercero", "Moneda", "ITBIS Original", "ITBIS RD$", "Total Original", "Total RD$"]
         )
         self.table.setAlternatingRowColors(False)
         self.table.setSelectionBehavior(
@@ -874,10 +878,13 @@ class ModernMainWindow(QMainWindow):
         elif key == "profit_summary":
             self.open_profit_summary_window()
 
-
         # ✅ NUEVO:  Caso para Contabilidad
         elif key == "accounting":
             self.open_accounting_menu()
+
+        # ✅ NUEVO: Caso para Optimizador Financiero
+        elif key == "financial_optimizer":
+            self.open_financial_optimizer()
 
         elif key == "reportes":
             # Abrir menú de opciones de reporte
@@ -1047,8 +1054,13 @@ class ModernMainWindow(QMainWindow):
             tx_type = str(trans.get("type") or trans.get("invoice_type") or "")
             number = str(trans.get("number") or trans.get("invoice_number") or "")
             party = str(trans.get("party") or trans.get("third_party_name") or "")
-            itbis_val = trans.get("itbis", 0.0)
-            total_val = trans.get("total", 0.0)
+            
+            # ✅ NUEVO: Obtener valores originales y convertidos
+            currency = str(trans.get("currency", "RD$"))
+            itbis_original = float(trans.get("itbis_original_currency", 0.0) or 0.0)
+            itbis_rd = float(trans.get("itbis_rd") or trans.get("itbis", 0.0) or 0.0)
+            total_original = float(trans.get("total_amount_original_currency", 0.0) or 0.0)
+            total_rd = float(trans.get("total_amount_rd") or trans.get("total", 0.0) or 0.0)
 
             if tx_type == "emitida":
                 type_display = "↑ INGRESO"
@@ -1059,10 +1071,12 @@ class ModernMainWindow(QMainWindow):
 
             flags = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
 
+            # Columna 0: Fecha
             date_item = QTableWidgetItem(date_val)
             date_item.setFlags(flags)
             self.table.setItem(row_index, 0, date_item)
 
+            # Columna 1: Tipo
             type_item = QTableWidgetItem(type_display)
             type_item.setFlags(flags)
             if tx_type == "emitida":
@@ -1074,28 +1088,68 @@ class ModernMainWindow(QMainWindow):
             )
             self.table.setItem(row_index, 1, type_item)
 
+            # Columna 2: Número de factura
             num_item = QTableWidgetItem(number)
             num_item.setFlags(flags)
             num_item.setData(Qt.ItemDataRole.UserRole, number)
             self.table.setItem(row_index, 2, num_item)
 
+            # Columna 3: Tercero
             party_item = QTableWidgetItem(party)
             party_item.setFlags(flags)
             self.table.setItem(row_index, 3, party_item)
 
-            itbis_item = QTableWidgetItem(f"RD$ {float(itbis_val):,.2f}")
-            itbis_item.setFlags(flags)
-            itbis_item.setTextAlignment(
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            # Columna 4: Moneda
+            currency_item = QTableWidgetItem(currency)
+            currency_item.setFlags(flags)
+            currency_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
             )
-            self.table.setItem(row_index, 4, itbis_item)
+            self.table.setItem(row_index, 4, currency_item)
 
-            total_item = QTableWidgetItem(f"RD$ {float(total_val):,.2f}")
-            total_item.setFlags(flags)
-            total_item.setTextAlignment(
+            # Columna 5: ITBIS Original
+            # Para moneda extranjera, mostrar en esa moneda; para RD$, mostrar sin prefijo
+            if currency in ["RD$", "DOP", "RD", "DOP$"]:
+                itbis_orig_display = f"RD$ {itbis_original:,.2f}"
+            else:
+                itbis_orig_display = f"{currency} {itbis_original:,.2f}"
+            
+            itbis_orig_item = QTableWidgetItem(itbis_orig_display)
+            itbis_orig_item.setFlags(flags)
+            itbis_orig_item.setTextAlignment(
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             )
-            self.table.setItem(row_index, 5, total_item)
+            self.table.setItem(row_index, 5, itbis_orig_item)
+
+            # Columna 6: ITBIS RD$
+            itbis_rd_item = QTableWidgetItem(f"RD$ {itbis_rd:,.2f}")
+            itbis_rd_item.setFlags(flags)
+            itbis_rd_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            self.table.setItem(row_index, 6, itbis_rd_item)
+
+            # Columna 7: Total Original
+            # Para moneda extranjera, mostrar en esa moneda; para RD$, mostrar sin prefijo
+            if currency in ["RD$", "DOP", "RD", "DOP$"]:
+                total_orig_display = f"RD$ {total_original:,.2f}"
+            else:
+                total_orig_display = f"{currency} {total_original:,.2f}"
+            
+            total_orig_item = QTableWidgetItem(total_orig_display)
+            total_orig_item.setFlags(flags)
+            total_orig_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            self.table.setItem(row_index, 7, total_orig_item)
+
+            # Columna 8: Total RD$
+            total_rd_item = QTableWidgetItem(f"RD$ {total_rd:,.2f}")
+            total_rd_item.setFlags(flags)
+            total_rd_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            self.table.setItem(row_index, 8, total_rd_item)
 
             # Colores por tipo: fila completa
             if tx_type == "emitida":
@@ -1653,6 +1707,74 @@ class ModernMainWindow(QMainWindow):
             import traceback
             traceback. print_exc()
 
+    def open_financial_optimizer(self):
+        """Abre el Optimizador Financiero."""
+        try:
+            company_id = self.get_current_company_id()
+            company_name = self.company_selector.currentText()
+            
+            if not company_id:
+                QMessageBox.warning(self, "Sin Empresa", "Selecciona una empresa primero.")
+                return
+            
+            from PyQt6.QtCore import QDate
+            
+            # Usar mes y año actuales de los selectores
+            month_name = self.month_selector.currentText()
+            month_str = self.MONTHS_MAP.get(month_name, None)
+            
+            try:
+                year_int = int(self.year_selector.currentText())
+            except:
+                year_int = QDate.currentDate().year()
+            
+            if not month_str:
+                month_str = f"{QDate.currentDate().month():02d}"
+            
+            # Obtener datos del balance para el optimizador
+            balance_data = self.controller.get_balance_sheet_for_optimizer(
+                company_id, year_int, int(month_str)
+            )
+            
+            if not balance_data or not balance_data.get('has_real_data'):
+                reply = QMessageBox.question(
+                    self,
+                    "Datos Contables No Disponibles",
+                    "No hay datos contables completos para este periodo.\n\n"
+                    "El optimizador requiere que el sistema contable esté actualizado.\n\n"
+                    "¿Desea abrir el Balance General para verificar los datos?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    self._open_balance_sheet(company_id, company_name)
+                return
+            
+            # Mostrar información del optimizador
+            QMessageBox.information(
+                self,
+                "🎯 Optimizador Financiero",
+                f"Análisis Financiero para {company_name}\n"
+                f"Periodo: {month_name} {year_int}\n\n"
+                f"📊 Datos Disponibles:\n"
+                f"• Activos Corrientes: RD$ {balance_data.get('current_assets', 0):,.2f}\n"
+                f"• Activos No Corrientes: RD$ {balance_data.get('non_current_assets', 0):,.2f}\n"
+                f"• Pasivos Corrientes: RD$ {balance_data.get('current_liabilities', 0):,.2f}\n"
+                f"• Pasivos No Corrientes: RD$ {balance_data.get('non_current_liabilities', 0):,.2f}\n"
+                f"• Patrimonio: RD$ {balance_data.get('equity', 0):,.2f}\n"
+                f"• Utilidad Neta: RD$ {balance_data.get('net_income', 0):,.2f}\n\n"
+                f"📈 Ratios Calculados:\n"
+                f"• ROA: {(balance_data.get('net_income', 0) / balance_data.get('total_assets', 1) * 100):.2f}%\n"
+                f"• ROE: {(balance_data.get('net_income', 0) / max(balance_data.get('equity', 1), 1) * 100):.2f}%\n"
+                f"• Razón Corriente: {(balance_data.get('current_assets', 0) / max(balance_data.get('current_liabilities', 1), 1)):.2f}\n"
+                f"• Endeudamiento: {(balance_data.get('total_liabilities', 0) / max(balance_data.get('total_assets', 1), 1) * 100):.2f}%\n\n"
+                f"Consulte el MANUAL_OPTIMIZADOR_FINANCIERO.md para más detalles."
+            )
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"No se pudo abrir el optimizador:\n{e}")
+            import traceback
+            traceback.print_exc()
+
     # ------------------------------------------------------------------
     # Menú y ventanas de Contabilidad
     # ------------------------------------------------------------------
@@ -1955,26 +2077,39 @@ class ModernMainWindow(QMainWindow):
 
 
         
-    def _open_generate_entries_dialog(self):
-        """Abre diálogo de generación de asientos."""
+    def _open_generate_entries_dialog(self, company_id, company_name: str):
+        """Abre el diálogo de generación de asientos desde facturas."""
         try:
             from accounting.generate_entries_from_invoices import GenerateEntriesFromInvoicesDialog
             
             dlg = GenerateEntriesFromInvoicesDialog(
                 parent=self,
                 controller=self.controller,
-                company_id=self.controller.active_company_id,
-                company_name=self. controller.active_company_name or "Empresa"
+                company_id=company_id,
+                company_name=company_name
             )
             dlg.exec()
             
-        except ImportError as e:
+            # Refrescar dashboard después de generar asientos
+            if hasattr(self, 'refresh_dashboard'):
+                self.refresh_dashboard()
+                
+        except ImportError as e: 
             QMessageBox.critical(
                 self,
                 "Error",
-                f"No se pudo cargar el diálogo:\n{e}"
-        )
-
+                f"No se pudo cargar el diálogo de generación:\n{e}\n\n"
+                "Asegúrate de tener el archivo:\n"
+                "accounting/generate_entries_from_invoices.py"
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Error al abrir generador de asientos:\n{e}"
+            )
+            import traceback
+            traceback.print_exc()
 
 
 

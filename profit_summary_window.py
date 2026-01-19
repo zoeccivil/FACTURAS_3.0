@@ -174,11 +174,16 @@ class ProfitSummaryWindow(QDialog):
             metrics_card.setObjectName("metricsCard")
             metrics_layout = QHBoxLayout(metrics_card)
             metrics_layout.setContentsMargins(20, 20, 20, 20)
-            metrics_layout.setSpacing(20)
+            metrics_layout.setSpacing(16)
 
-            income_card = self._create_metric_card("Total Ingresos", "#15803D", "#ECFDF5")
-            self.label_total_ingresos = income_card["value_label"]
-            metrics_layout.addWidget(income_card["widget"], 1)
+            income_fac_card = self._create_metric_card("Ingresos Facturados", "#15803D", "#ECFDF5")
+            self.label_total_ingresos = income_fac_card["value_label"]
+            metrics_layout.addWidget(income_fac_card["widget"], 1)
+
+            # ✅ NUEVO: Card de Ingresos Adicionales (Verde)
+            income_add_card = self._create_metric_card("Ingresos Adicionales", "#16A34A", "#F0FDF4")
+            self.label_ingresos_adicionales = income_add_card["value_label"]
+            metrics_layout.addWidget(income_add_card["widget"], 1)
 
             expense_fac_card = self._create_metric_card("Gastos Facturados", "#DC2626", "#FEF2F2")
             self.label_gastos_facturados = expense_fac_card["value_label"]
@@ -215,8 +220,13 @@ class ProfitSummaryWindow(QDialog):
 
             # === BOTONES (LAYOUT CORREGIDO) ===
             btn_layout = QHBoxLayout()
-            btn_layout.setSpacing(16) # Espacio uniforme entre botones
-            btn_layout.setContentsMargins(0, 10, 0, 0) # Margen superior para separar del cuadro anterior
+            btn_layout.setSpacing(16)
+            btn_layout.setContentsMargins(0, 10, 0, 0)
+            
+            # ✅ NUEVO: Botón de Ingresos Adicionales (Verde)
+            self.btn_gestionar_ingresos = QPushButton("📈 Gestionar Ingresos Adicionales")
+            self.btn_gestionar_ingresos.setObjectName("incomeButton")
+            self.btn_gestionar_ingresos.clicked.connect(self._open_additional_income_manager)
             
             self.btn_gestionar_gastos = QPushButton("⚙️ Gestionar Gastos Adicionales")
             self.btn_gestionar_gastos.setObjectName("secondaryButton")
@@ -230,8 +240,8 @@ class ProfitSummaryWindow(QDialog):
             self.btn_generar_reporte.setObjectName("primaryButton")
             self.btn_generar_reporte.clicked.connect(self._generate_pdf_report)
             
-            # Usamos addStretch para centrar el grupo, o puedes quitarlos si quieres que ocupen todo el ancho
             btn_layout.addStretch() 
+            btn_layout.addWidget(self.btn_gestionar_ingresos)
             btn_layout.addWidget(self.btn_gestionar_gastos)
             btn_layout.addWidget(self.btn_ajustar_utilidad)
             btn_layout.addWidget(self.btn_generar_reporte)
@@ -364,6 +374,20 @@ class ProfitSummaryWindow(QDialog):
                 }
                 QPushButton#adjustButton:hover { background-color: #C2410C; }
                 QPushButton#adjustButton:pressed { background-color: #9A3412; }
+                
+                QPushButton#incomeButton {
+                    background-color: #15803D;
+                    color: #FFFFFF;
+                    border: none;
+                    border-radius: 8px;
+                    padding: 0px 24px;
+                    font-weight: 600;
+                    font-size: 14px;
+                    min-width: 200px;
+                    height: 40px; /* ALTO FIJO PARA ALINEACIÓN */
+                }
+                QPushButton#incomeButton:hover { background-color: #166534; }
+                QPushButton#incomeButton:pressed { background-color: #14532D; }
             """)
 
     def _create_metric_card(self, title: str, color:  str, bg_color: str):
@@ -443,12 +467,12 @@ class ProfitSummaryWindow(QDialog):
 
     def _load_data(self):
         """Carga datos desde el controller."""
-        month_name = self.month_selector. currentText()
-        self.current_month_str = self. MONTHS_MAP. get(month_name)
+        month_name = self.month_selector.currentText()
+        self.current_month_str = self.MONTHS_MAP.get(month_name)
         try:
-            self.current_year_int = int(self. year_selector.currentText())
+            self.current_year_int = int(self.year_selector.currentText())
         except:
-            self.current_year_int = QDate. currentDate().year()
+            self.current_year_int = QDate.currentDate().year()
 
         summary = {}
         try:
@@ -459,19 +483,21 @@ class ProfitSummaryWindow(QDialog):
                     self.current_year_int
                 ) or {}
         except Exception as e: 
-            print(f"[PROFIT] Error:  {e}")
+            print(f"[PROFIT] Error: {e}")
             QMessageBox.warning(self, "Error", f"Error cargando datos:\n{e}")
             summary = {}
 
         self.report_data = summary
 
-        total_ingresos = float(summary.get("total_income", 0.0))
+        total_ingresos_fac = float(summary.get("total_income", 0.0))
+        ingresos_adicionales = float(summary.get("additional_income", 0.0))  # ✅ NUEVO
         gastos_facturados = float(summary.get("total_expense", 0.0))
         gastos_adicionales = float(summary.get("additional_expenses", 0.0))
         utilidad_neta = float(summary.get("net_profit", 0.0))
 
-        self.label_total_ingresos.setText(f"RD$ {total_ingresos:,.2f}")
-        self.label_gastos_facturados. setText(f"RD$ {gastos_facturados:,.2f}")
+        self.label_total_ingresos.setText(f"RD$ {total_ingresos_fac:,.2f}")
+        self.label_ingresos_adicionales.setText(f"RD$ {ingresos_adicionales:,.2f}")  # ✅ NUEVO
+        self.label_gastos_facturados.setText(f"RD$ {gastos_facturados:,.2f}")
         self.label_gastos_adicionales.setText(f"RD$ {gastos_adicionales:,.2f}")
         
         if utilidad_neta >= 0:
@@ -482,7 +508,7 @@ class ProfitSummaryWindow(QDialog):
             prefix = "⚠️ "
         
         self.label_utilidad_neta.setStyleSheet(
-            f"font-size: 28px; font-weight: 800; color:  {color};"
+            f"font-size: 28px; font-weight: 800; color: {color};"
         )
         self.label_utilidad_neta.setText(f"{prefix}RD$ {utilidad_neta:,.2f}")
 
@@ -492,6 +518,24 @@ class ProfitSummaryWindow(QDialog):
         """Evento de cambio de periodo."""
         self._update_subtitle()
         self._load_data()
+
+    def _open_additional_income_manager(self):
+        """Abre gestor de ingresos adicionales ACUMULATIVOS."""
+        try:
+            from annual_income_manager import AnnualIncomeManager
+            
+            dlg = AnnualIncomeManager(
+                parent=self,
+                controller=self.controller,
+                company_id=self.company_id,
+                company_name=self.company_name,
+                month_str=self.current_month_str or "01",
+                year_int=self.current_year_int
+            )
+            dlg.exec()
+            self._load_data()  # Refrescar datos después de cerrar
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error abriendo gestor de ingresos:\n{str(e)}")
 
     def _open_additional_expenses_manager(self):
         """Abre gestor de gastos adicionales ACUMULATIVOS."""

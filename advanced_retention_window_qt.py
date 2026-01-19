@@ -193,13 +193,17 @@ class AdvancedRetentionWindowQt(QDialog):
             "Fecha",
             "No. Factura",
             "Empresa",
-            "Subtotal",
-            "ITBIS",
-            "Total Factura",
+            "Moneda",
+            "Subtotal (Original)",
+            "ITBIS (Original)",
+            "Total (Original)",
+            "Subtotal (RD$)",
+            "ITBIS (RD$)",
+            "Total (RD$)",
             "Retención ITBIS?",
-            "Valor Retención",
-            "% A Pagar",
-            "Total Impuestos",
+            "Valor Retención (RD$)",
+            "% A Pagar (RD$)",
+            "Total Impuestos (RD$)",
         ]
         self.table = QTableWidget(0, len(cols))
         self.table.setHorizontalHeaderLabels(cols)
@@ -211,7 +215,7 @@ class AdvancedRetentionWindowQt(QDialog):
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft)
         header.setMinimumSectionSize(60)
 
-        default_widths = [55, 90, 120, 230, 100, 90, 110, 110, 110, 110, 130]
+        default_widths = [50, 90, 120, 200, 70, 110, 110, 110, 110, 110, 110, 80, 120, 120, 130]
         for i, w in enumerate(default_widths):
             if i < self.table.columnCount():
                 self.table.setColumnWidth(i, w)
@@ -317,6 +321,10 @@ class AdvancedRetentionWindowQt(QDialog):
             gridline-color: #E5E7EB;
             selection-background-color: #DBEAFE;
             selection-color: #111827;
+        }
+        QTableWidget::item:selected {
+            background-color: #DBEAFE;
+            color: #111827;
         }
         QHeaderView::section {
             background-color: #F9FAFB;
@@ -463,88 +471,145 @@ class AdvancedRetentionWindowQt(QDialog):
                 "retention": has_retention,
             }
 
+            # ✅ NUEVO: Obtener valores originales y convertidos
+            currency = inv.get("currency", "RD$")
             exchange = float(inv.get("exchange_rate", 1.0) or 1.0)
-            itbis_rd = float(inv.get("itbis", 0.0)) * exchange
-            total_rd = float(
-                inv. get("total_amount_rd")
-                or (float(inv. get("total_amount", 0.0)) * exchange)
-            )
+            
+            # Valores originales
+            itbis_original = float(inv.get("itbis_original_currency", 0.0) or 0.0)
+            total_original = float(inv.get("total_amount_original_currency", 0.0) or 0.0)
+            
+            # Si no hay valores originales, calcularlos desde RD$
+            if itbis_original == 0.0 and exchange > 0:
+                itbis_rd = float(inv.get("itbis_rd") or inv.get("itbis", 0.0) or 0.0)
+                itbis_original = itbis_rd / exchange if currency not in ["RD$", "DOP"] else itbis_rd
+            else:
+                itbis_rd = float(inv.get("itbis_rd") or inv.get("itbis", 0.0) or 0.0)
+            
+            if total_original == 0.0 and exchange > 0:
+                total_rd = float(inv.get("total_amount_rd") or inv.get("total_amount", 0.0) or 0.0)
+                total_original = total_rd / exchange if currency not in ["RD$", "DOP"] else total_rd
+            else:
+                total_rd = float(inv.get("total_amount_rd") or inv.get("total_amount", 0.0) or 0.0)
+            
+            subtotal_original = total_original - itbis_original
             subtotal_rd = total_rd - itbis_rd
 
             row = self.table.rowCount()
             self.table.insertRow(row)
 
+            # Columna 0: Selección
             sel_item = QTableWidgetItem()
             sel_item.setFlags(
-                Qt. ItemFlag.ItemIsUserCheckable
-                | Qt. ItemFlag.ItemIsEnabled
+                Qt.ItemFlag.ItemIsUserCheckable
+                | Qt.ItemFlag.ItemIsEnabled
                 | Qt.ItemFlag.ItemIsSelectable
             )
             sel_item.setCheckState(
                 Qt.CheckState.Checked if is_selected else Qt.CheckState.Unchecked
             )
-            sel_item.setTextAlignment(Qt.AlignmentFlag. AlignCenter)
+            sel_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            # ✅ NUEVO: Añadir símbolo visible para checkbox
+            sel_item.setText("☑" if is_selected else "☐")
             self.table.setItem(row, 0, sel_item)
 
+            # Columna 1: Fecha
             self.table.setItem(
-                row, 1, QTableWidgetItem(str(inv. get("invoice_date", "")))
+                row, 1, QTableWidgetItem(str(inv.get("invoice_date", "")))
             )
 
+            # Columna 2: No. Factura
             inv_item = QTableWidgetItem(str(inv.get("invoice_number", "")))
-            inv_item.setData(Qt.ItemDataRole.UserRole, inv_id)  # ✅ Guardar sin conversión
-            self.table. setItem(row, 2, inv_item)
+            inv_item.setData(Qt.ItemDataRole.UserRole, inv_id)
+            self.table.setItem(row, 2, inv_item)
 
+            # Columna 3: Empresa
             self.table.setItem(
                 row, 3, QTableWidgetItem(str(inv.get("third_party_name", "")))
             )
 
-            subtotal_item = QTableWidgetItem(f"{subtotal_rd: ,.2f}")
-            subtotal_item.setTextAlignment(
-                Qt.AlignmentFlag. AlignRight | Qt.AlignmentFlag.AlignVCenter
-            )
-            self.table.setItem(row, 4, subtotal_item)
+            # Columna 4: Moneda
+            currency_item = QTableWidgetItem(currency)
+            currency_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(row, 4, currency_item)
 
-            itbis_item = QTableWidgetItem(f"{itbis_rd:,.2f}")
-            itbis_item.setTextAlignment(
+            # Columna 5: Subtotal Original
+            subtotal_orig_item = QTableWidgetItem(f"{subtotal_original:,.2f}")
+            subtotal_orig_item.setTextAlignment(
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             )
-            self.table.setItem(row, 5, itbis_item)
+            self.table.setItem(row, 5, subtotal_orig_item)
 
-            total_item = QTableWidgetItem(f"{total_rd:,.2f}")
-            total_item.setTextAlignment(
+            # Columna 6: ITBIS Original
+            itbis_orig_item = QTableWidgetItem(f"{itbis_original:,.2f}")
+            itbis_orig_item.setTextAlignment(
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             )
-            self.table.setItem(row, 6, total_item)
+            self.table.setItem(row, 6, itbis_orig_item)
 
+            # Columna 7: Total Original
+            total_orig_item = QTableWidgetItem(f"{total_original:,.2f}")
+            total_orig_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            self.table.setItem(row, 7, total_orig_item)
+
+            # Columna 8: Subtotal RD$
+            subtotal_rd_item = QTableWidgetItem(f"{subtotal_rd:,.2f}")
+            subtotal_rd_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            self.table.setItem(row, 8, subtotal_rd_item)
+
+            # Columna 9: ITBIS RD$
+            itbis_rd_item = QTableWidgetItem(f"{itbis_rd:,.2f}")
+            itbis_rd_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            self.table.setItem(row, 9, itbis_rd_item)
+
+            # Columna 10: Total RD$
+            total_rd_item = QTableWidgetItem(f"{total_rd:,.2f}")
+            total_rd_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            self.table.setItem(row, 10, total_rd_item)
+
+            # Columna 11: Retención ITBIS checkbox
             ret_item = QTableWidgetItem()
             ret_item.setFlags(
-                Qt.ItemFlag. ItemIsUserCheckable
+                Qt.ItemFlag.ItemIsUserCheckable
                 | Qt.ItemFlag.ItemIsEnabled
-                | Qt.ItemFlag. ItemIsSelectable
+                | Qt.ItemFlag.ItemIsSelectable
             )
             ret_item.setCheckState(
-                Qt.CheckState. Checked if has_retention else Qt.CheckState. Unchecked
+                Qt.CheckState.Checked if has_retention else Qt.CheckState.Unchecked
             )
-            ret_item.setTextAlignment(Qt.AlignmentFlag. AlignCenter)
-            self.table.setItem(row, 7, ret_item)
+            ret_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            # ✅ NUEVO: Añadir símbolo visible para checkbox
+            ret_item.setText("☑" if has_retention else "☐")
+            self.table.setItem(row, 11, ret_item)
 
+            # Columna 12: Valor Retención (RD$)
             rv = QTableWidgetItem("0.00")
             rv.setTextAlignment(
-                Qt.AlignmentFlag. AlignRight | Qt.AlignmentFlag.AlignVCenter
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             )
-            self.table. setItem(row, 8, rv)
+            self.table.setItem(row, 12, rv)
 
+            # Columna 13: % A Pagar (RD$)
             mp = QTableWidgetItem("0.00")
             mp.setTextAlignment(
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             )
-            self.table.setItem(row, 9, mp)
+            self.table.setItem(row, 13, mp)
 
+            # Columna 14: Total Impuestos (RD$)
             ti = QTableWidgetItem("0.00")
             ti.setTextAlignment(
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             )
-            self.table.setItem(row, 10, ti)
+            self.table.setItem(row, 14, ti)
 
         self._recalculate_and_update()
 
@@ -560,26 +625,32 @@ class AdvancedRetentionWindowQt(QDialog):
             # ✅ CORREGIDO: No forzar conversión a int
             inv_id = id_item.data(Qt.ItemDataRole.UserRole)
 
-            if column == 0:
+            if column == 0:  # Columna "Sel."
                 cur = self.table.item(row, 0)
                 if not cur:
                     return
                 new_state = cur.checkState() == Qt.CheckState.Checked
                 self.tree_item_states[inv_id]["selected"] = new_state
+                # ✅ NUEVO: Actualizar símbolo visual
+                cur.setText("☑" if new_state else "☐")
+                
                 if not new_state:
-                    self. tree_item_states[inv_id]["retention"] = False
-                    retcell = self.table.item(row, 7)
+                    self.tree_item_states[inv_id]["retention"] = False
+                    retcell = self.table.item(row, 11)  # ✅ Actualizado índice
                     if retcell:
                         retcell.setCheckState(Qt.CheckState.Unchecked)
+                        retcell.setText("☐")
 
-            elif column == 7:
-                if not self.tree_item_states. get(inv_id, {}).get("selected"):
+            elif column == 11:  # Columna "Retención ITBIS?" - ✅ Actualizado índice
+                if not self.tree_item_states.get(inv_id, {}).get("selected"):
                     return
-                cur = self.table.item(row, 7)
+                cur = self.table.item(row, 11)
                 if not cur: 
                     return
                 new_ret = cur.checkState() == Qt.CheckState.Checked
                 self.tree_item_states[inv_id]["retention"] = new_ret
+                # ✅ NUEVO: Actualizar símbolo visual
+                cur.setText("☑" if new_ret else "☐")
 
             self._recalculate_and_update()
         except Exception as e:
@@ -593,7 +664,7 @@ class AdvancedRetentionWindowQt(QDialog):
     # Recalcular y actualizar resultados
     # ------------------------------------------------------------------ #
     def _recalculate_and_update(self):
-        currency_totals:  dict[str, float] = {}
+        currency_totals: dict[str, float] = {}
         grand_total_rd = 0.0
         currency_symbols = {"USD": "$", "EUR": "€", "RD$": "RD$"}
 
@@ -623,19 +694,36 @@ class AdvancedRetentionWindowQt(QDialog):
                 continue
 
             state = self.tree_item_states.get(
-                inv_id, {"selected":  False, "retention": False}
+                inv_id, {"selected": False, "retention": False}
             )
-            selected = state. get("selected", False)
+            selected = state.get("selected", False)
             retention = state.get("retention", False)
 
             try:
-                itbis_orig = float(invoice_data.get("itbis", 0.0))
-                total_orig = float(invoice_data.get("total_amount", 0.0))
+                # Obtener valores originales
+                itbis_original = float(invoice_data.get("itbis_original_currency", 0.0) or 0.0)
+                total_original = float(invoice_data.get("total_amount_original_currency", 0.0) or 0.0)
                 currency = invoice_data.get("currency") or "RD$"
                 exchange = float(invoice_data.get("exchange_rate", 1.0) or 1.0)
+                
+                # Si no hay valores originales, calcularlos desde RD$
+                if itbis_original == 0.0:
+                    itbis_rd = float(invoice_data.get("itbis_rd") or invoice_data.get("itbis", 0.0) or 0.0)
+                    itbis_original = itbis_rd / exchange if exchange > 0 and currency not in ["RD$", "DOP"] else itbis_rd
+                else:
+                    itbis_rd = itbis_original * exchange
+                
+                if total_original == 0.0:
+                    total_rd = float(invoice_data.get("total_amount_rd") or invoice_data.get("total_amount", 0.0) or 0.0)
+                    total_original = total_rd / exchange if exchange > 0 and currency not in ["RD$", "DOP"] else total_rd
+                else:
+                    total_rd = total_original * exchange
+                    
             except Exception:
-                itbis_orig = 0.0
-                total_orig = 0.0
+                itbis_original = 0.0
+                total_original = 0.0
+                itbis_rd = 0.0
+                total_rd = 0.0
                 currency = "RD$"
                 exchange = 1.0
 
@@ -645,24 +733,28 @@ class AdvancedRetentionWindowQt(QDialog):
 
             if selected:
                 if retention:
-                    valor_retencion_orig = itbis_orig * 0.30
-                monto_a_pagar_orig = total_orig * percent
-                itbis_neto_orig = itbis_orig - valor_retencion_orig
+                    # ✅ CORRECCIÓN: Retención del 30% del ITBIS original
+                    valor_retencion_orig = itbis_original * 0.30
+                # ✅ CORRECCIÓN: Calcular sobre el total original
+                monto_a_pagar_orig = total_original * percent
+                itbis_neto_orig = itbis_original - valor_retencion_orig
                 total_impuestos_row_orig = itbis_neto_orig + monto_a_pagar_orig
 
-                currency_totals. setdefault(currency, 0.0)
+                currency_totals.setdefault(currency, 0.0)
                 currency_totals[currency] += total_impuestos_row_orig
 
                 grand_total_rd += total_impuestos_row_orig * exchange
 
+            # Convertir a RD$ para mostrar
             valor_retencion_rd = valor_retencion_orig * exchange
             monto_a_pagar_rd = monto_a_pagar_orig * exchange
             total_impuestos_row_rd = total_impuestos_row_orig * exchange
 
+            # ✅ Actualizar las columnas correctas (índices 12, 13, 14)
             try:
-                self.table.item(row, 8).setText(f"{valor_retencion_rd:,.2f}")
-                self.table.item(row, 9).setText(f"{monto_a_pagar_rd:,.2f}")
-                self.table.item(row, 10).setText(f"{total_impuestos_row_rd:,.2f}")
+                self.table.item(row, 12).setText(f"{valor_retencion_rd:,.2f}")
+                self.table.item(row, 13).setText(f"{monto_a_pagar_rd:,.2f}")
+                self.table.item(row, 14).setText(f"{total_impuestos_row_rd:,.2f}")
             except Exception:
                 pass
 
@@ -680,6 +772,7 @@ class AdvancedRetentionWindowQt(QDialog):
             self.results_layout.addWidget(lbl)
             return
 
+        # ✅ NUEVO: Mostrar totales por moneda original Y el total convertido a RD$
         for currency, total in sorted(currency_totals.items()):
             symbol = currency_symbols.get(currency, currency)
 
@@ -692,7 +785,7 @@ class AdvancedRetentionWindowQt(QDialog):
             badge.setStyleSheet(
                 """
                 QLabel {
-                    background-color:  #EEF2FF;
+                    background-color: #EEF2FF;
                     color: #4F46E5;
                     border-radius: 10px;
                     padding: 2px 8px;
@@ -702,19 +795,19 @@ class AdvancedRetentionWindowQt(QDialog):
                 """
             )
 
-            label = QLabel("Suma Total Impuestos:")
+            label = QLabel("Total Impuestos:")
             label.setStyleSheet("font-size: 12px; color: #4B5563;")
 
             value = QLabel(f"{symbol} {total:,.2f}")
             value.setStyleSheet(
-                "font-weight: 600; font-size:  13px; color: #111827;"
+                "font-weight: 600; font-size: 13px; color: #111827;"
             )
 
             row_layout.addWidget(badge)
             row_layout.addSpacing(4)
             row_layout.addWidget(label)
             row_layout.addStretch()
-            row_layout. addWidget(value)
+            row_layout.addWidget(value)
 
             self.results_layout.addWidget(row_widget)
 

@@ -56,41 +56,71 @@ def format_date_for_report(date_val) -> str:
     return date_str
 
 
-# --- DESIGN SYSTEM CONSTANTS (RGB) ---
+import os
+import io
+import glob
+import shutil
+import tempfile
+import logging
+import math
+import datetime
+
+import pandas as pd
+from fpdf import FPDF
+from PIL import Image
+from pypdf import PdfWriter, PdfReader
+
+# Logger config
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("[%(levelname)s] %(name)s: %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+logger.setLevel(logging.INFO)
+
+# --- UTILS ---
+def format_date_for_report(date_val) -> str:
+    """Formatea una fecha a string YYYY-MM-DD."""
+    if not date_val:
+        return ""
+    if hasattr(date_val, 'date') and callable(date_val.date):
+        try: return date_val.date().strftime("%Y-%m-%d")
+        except: pass
+    if isinstance(date_val, datetime.datetime):
+        return date_val.strftime("%Y-%m-%d")
+    if isinstance(date_val, datetime.date):
+        return date_val.strftime("%Y-%m-%d")
+    date_str = str(date_val).strip()
+    if len(date_str) >= 10 and date_str[4] == '-' and date_str[7] == '-':
+        return date_str[:10]
+    return date_str
+
+# --- COLORS ---
 COLORS = {
     'white': (255, 255, 255),
-    'slate_50': (248, 250, 252),   # Backgrounds alternos / Headers tabla
-    'slate_100': (241, 245, 249),  # Bordes suaves
-    'slate_200': (226, 232, 240),  # Bordes
-    'slate_400': (148, 163, 184),  # Texto secundario claro
-    'slate_500': (100, 116, 139),  # Texto secundario / Labels
-    'slate_600': (71, 85, 105),    # Texto cuerpo
-    'slate_700': (51, 65, 85),     # Títulos secundarios
-    'slate_800': (30, 41, 59),     # Títulos principales
-    'slate_900': (15, 23, 42),     # Negro corporativo / Fondos oscuros
-    
-    'emerald_50': (236, 253, 245), # Fondo Badge Exito
-    'emerald_500': (16, 185, 129), # Acento Exito
-    'emerald_600': (5, 150, 105),  # Texto Exito
-    
-    'red_50': (254, 242, 242),     # Fondo Badge Error/Gasto
-    'red_500': (239, 68, 68),      # Acento Error/Gasto
-    'red_600': (220, 38, 38),      # Texto Error/Gasto
-    
-    'blue_50': (239, 246, 255),    # Fondo Badge Info
-    'blue_500': (59, 130, 246),    # Acento Info
-    'blue_600': (37, 99, 235),     # Texto Info
-    'indigo_900': (49, 46, 129),   # Fondo Header Multi-moneda
+    'slate_50': (248, 250, 252),
+    'slate_100': (241, 245, 249),
+    'slate_200': (226, 232, 240),
+    'slate_400': (148, 163, 184),
+    'slate_500': (100, 116, 139),
+    'slate_600': (71, 85, 105),
+    'slate_700': (51, 65, 85),
+    'slate_800': (30, 41, 59),
+    'slate_900': (15, 23, 42),
+    'emerald_50': (236, 253, 245),
+    'emerald_500': (16, 185, 129),
+    'emerald_600': (5, 150, 105),
+    'red_50': (254, 242, 242),
+    'red_500': (239, 68, 68),
+    'red_600': (220, 38, 38),
+    'blue_50': (239, 246, 255),
+    'blue_500': (59, 130, 246),
+    'blue_600': (37, 99, 235),
+    'indigo_900': (49, 46, 129),
 }
 
 class ModernPDF(FPDF):
-    """
-    Clase extendida de FPDF con capacidades gráficas modernas:
-    - Colores HEX/RGB centralizados
-    - Rectángulos redondeados
-    - Badges
-    - Tipografía estándar limpia (Arial como proxy de Inter)
-    """
     def __init__(self, orientation='P', unit='mm', format='A4', company_name="", report_title="", report_period=""):
         super().__init__(orientation, unit, format)
         self.company_name = company_name
@@ -98,7 +128,7 @@ class ModernPDF(FPDF):
         self.report_period = report_period
         self.set_auto_page_break(auto=True, margin=15)
         self.alias_nb_pages()
-        self.set_margins(15, 15, 15) # Márgenes más generosos
+        self.set_margins(15, 15, 15)
 
     def set_color_rgb(self, rgb_tuple):
         self.set_draw_color(*rgb_tuple)
@@ -115,126 +145,93 @@ class ModernPDF(FPDF):
         self.set_draw_color(*rgb_tuple)
 
     def rounded_rect(self, x, y, w, h, r, style='D', corners='1234'):
-        """Dibuja un rectángulo con esquinas redondeadas."""
-        k = 0.26878  # Kappa para curvas de Bezier aproximando círculo
-        # Corrección fpdf 1.7
-        # x, y son coordenadas esquina superior izquierda
-        
-        if style == 'F':
-            op = 'f'
-        elif style == 'FD' or style == 'DF':
-            op = 'B'
-        else:
-            op = 'S'
-            
+        k = 0.26878
+        if style == 'F': op = 'f'
+        elif style == 'FD' or style == 'DF': op = 'B'
+        else: op = 'S'
         hp = self.h
         self._out('%.2f %.2f m' % ((x + r) * self.k, (hp - y) * self.k))
-
-        # Esquina 2 (Arriba Derecha)
         if '2' in corners:
             xc = x + w - r
             yc = y + r
             self._out('%.2f %.2f l' % (xc * self.k, (hp - y) * self.k))
-            self._out('%.2f %.2f %.2f %.2f %.2f %.2f c' % 
-                ((xc + r * k) * self.k, (hp - y) * self.k,
-                 (x + w) * self.k, (hp - (yc - r * k)) * self.k,
-                 (x + w) * self.k, (hp - yc) * self.k))
-        else:
-            self._out('%.2f %.2f l' % ((x + w) * self.k, (hp - y) * self.k))
-
-        # Esquina 3 (Abajo Derecha)
+            self._out('%.2f %.2f %.2f %.2f %.2f %.2f c' % ((xc + r * k) * self.k, (hp - y) * self.k, (x + w) * self.k, (hp - (yc - r * k)) * self.k, (x + w) * self.k, (hp - yc) * self.k))
+        else: self._out('%.2f %.2f l' % ((x + w) * self.k, (hp - y) * self.k))
         if '3' in corners:
             xc = x + w - r
             yc = y + h - r
             self._out('%.2f %.2f l' % ((x + w) * self.k, (hp - yc) * self.k))
-            self._out('%.2f %.2f %.2f %.2f %.2f %.2f c' % 
-                ((x + w) * self.k, (hp - (yc + r * k)) * self.k,
-                 (xc + r * k) * self.k, (hp - (y + h)) * self.k,
-                 xc * self.k, (hp - (y + h)) * self.k))
-        else:
-            self._out('%.2f %.2f l' % ((x + w) * self.k, (hp - (y + h)) * self.k))
-
-        # Esquina 4 (Abajo Izquierda)
+            self._out('%.2f %.2f %.2f %.2f %.2f %.2f c' % ((x + w) * self.k, (hp - (yc + r * k)) * self.k, (xc + r * k) * self.k, (hp - (y + h)) * self.k, xc * self.k, (hp - (y + h)) * self.k))
+        else: self._out('%.2f %.2f l' % ((x + w) * self.k, (hp - (y + h)) * self.k))
         if '4' in corners:
             xc = x + r
             yc = y + h - r
             self._out('%.2f %.2f l' % (xc * self.k, (hp - (y + h)) * self.k))
-            self._out('%.2f %.2f %.2f %.2f %.2f %.2f c' % 
-                ((xc - r * k) * self.k, (hp - (y + h)) * self.k,
-                 x * self.k, (hp - (yc + r * k)) * self.k,
-                 x * self.k, (hp - yc) * self.k))
-        else:
-            self._out('%.2f %.2f l' % (x * self.k, (hp - (y + h)) * self.k))
-
-        # Esquina 1 (Arriba Izquierda)
+            self._out('%.2f %.2f %.2f %.2f %.2f %.2f c' % ((xc - r * k) * self.k, (hp - (y + h)) * self.k, x * self.k, (hp - (yc + r * k)) * self.k, x * self.k, (hp - yc) * self.k))
+        else: self._out('%.2f %.2f l' % (x * self.k, (hp - (y + h)) * self.k))
         if '1' in corners:
             xc = x + r
             yc = y + r
             self._out('%.2f %.2f l' % (x * self.k, (hp - yc) * self.k))
-            self._out('%.2f %.2f %.2f %.2f %.2f %.2f c' % 
-                (x * self.k, (hp - (yc - r * k)) * self.k,
-                 (xc - r * k) * self.k, (hp - y) * self.k,
-                 xc * self.k, (hp - y) * self.k))
-        else:
-            self._out('%.2f %.2f l' % (x * self.k, (hp - y) * self.k))
-
+            self._out('%.2f %.2f %.2f %.2f %.2f %.2f c' % (x * self.k, (hp - (yc - r * k)) * self.k, (xc - r * k) * self.k, (hp - y) * self.k, xc * self.k, (hp - y) * self.k))
+        else: self._out('%.2f %.2f l' % (x * self.k, (hp - y) * self.k))
         self._out(op)
 
     def draw_badge(self, text, x, y, bg_color, text_color):
-        """Dibuja una píldora (badge) pequeña."""
         self.set_font('Arial', 'B', 7)
         w = self.get_string_width(text) + 6
         h = 5
-        
         self.set_fill_color_rgb(bg_color)
         self.set_text_color_rgb(text_color)
-        self.set_draw_color_rgb(bg_color) # Borde del mismo color que fondo
-        
+        self.set_draw_color_rgb(bg_color)
         self.rounded_rect(x, y, w, h, 2, 'DF')
-        
         self.set_xy(x, y)
         self.cell(w, h, text, 0, 0, 'C')
         
     def header(self):
-        # Header Moderno Limpio
+        # Header Corregido y Alineado
         if self.page_no() == 1:
-            # Logo placeholder (cuadrado oscuro)
             self.set_fill_color_rgb(COLORS['slate_900'])
             self.rounded_rect(15, 12, 10, 10, 2, 'F')
             
-            # Título App
+            # Anchos y posiciones dinámicas
+            page_width = self.w - 30 
+            right_width = 90  # Ancho fijo para bloque derecho
+            left_width = page_width - right_width - 15 
+
+            # Izquierda
             self.set_xy(28, 12)
             self.set_font('Arial', 'B', 14)
             self.set_text_color_rgb(COLORS['slate_900'])
-            self.cell(0, 6, "Gestión Facturas PRO", 0, 1, 'L')
+            self.cell(left_width, 6, "Gestión Facturas PRO", 0, 0, 'L')
             
-            # Subtítulo Reporte
-            self.set_xy(28, 18)
+            self.set_xy(28, 19)
             self.set_font('Arial', '', 10)
             self.set_text_color_rgb(COLORS['slate_500'])
-            self.cell(0, 5, self.report_title, 0, 1, 'L')
+            self.cell(left_width, 5, self.report_title[:55], 0, 0, 'L')
             
-            # Bloque Derecho (Periodo/Empresa)
-            self.set_y(12)
+            # Derecha
+            right_x = self.w - 15 - right_width
+            self.set_xy(right_x, 12)
             self.set_font('Arial', 'B', 8)
             self.set_text_color_rgb(COLORS['slate_400'])
-            self.cell(0, 4, "EMPRESA / PERIODO", 0, 1, 'R')
+            self.cell(right_width, 4, "EMPRESA / PERIODO", 0, 1, 'R')
             
+            self.set_x(right_x)
             self.set_font('Arial', 'B', 10)
             self.set_text_color_rgb(COLORS['slate_800'])
-            self.cell(0, 5, self.company_name[:40], 0, 1, 'R')
+            self.cell(right_width, 5, self.company_name[:40], 0, 1, 'R')
             
+            self.set_x(right_x)
             self.set_font('Arial', '', 9)
             self.set_text_color_rgb(COLORS['slate_500'])
-            self.cell(0, 5, self.report_period, 0, 1, 'R')
+            self.cell(right_width, 5, self.report_period, 0, 1, 'R')
             
-            # Línea separadora
-            self.ln(5)
+            self.set_y(32)
             self.set_draw_color_rgb(COLORS['slate_200'])
-            self.line(15, self.get_y(), self.w - 15, self.get_y())
+            self.line(15, 32, self.w - 15, 32)
             self.ln(8)
         else:
-            # Header simplificado páginas siguientes
             self.set_font('Arial', 'I', 8)
             self.set_text_color_rgb(COLORS['slate_400'])
             self.cell(0, 10, f"{self.report_title} - {self.report_period}", 0, 0, 'R')
@@ -462,51 +459,80 @@ def generate_professional_pdf(report_data, save_path, company_name, month, year,
                     except: pass
             return n
 
-        # ✅ Datos Facturas Emitidas - FECHA CORREGIDA
+        # ✅ Datos Facturas Emitidas - ITBIS corregido sin doble multiplicación
         inv_emitted = _safe_list(report_data. get('emitted_invoices', []))
         data_em = []
         for f in inv_emitted:
-            rate = float(f.get('exchange_rate', 1.0) or 1.0)
-            itbis = float(f.get('itbis', 0.0)) * rate
-            total = float(f.get('total_amount_rd') or (float(f.get('total_amount', 0.0)) * rate))
+            # Obtener valores ya convertidos a RD$ (sin multiplicar nuevamente)
+            # Priorizar campos _rd que ya están en pesos dominicanos
+            itbis_rd = float(f.get('itbis_rd') or f.get('itbis', 0.0) or 0.0)
+            total_rd = float(f.get('total_amount_rd') or f.get('total_amount', 0.0) or 0.0)
+            
+            # Obtener moneda y valores originales para mostrar
+            currency = f.get('currency', 'RD$')
+            itbis_orig = f.get('itbis_original_currency')
+            total_orig = f.get('total_amount_original_currency')
+            
+            # Si hay moneda extranjera, mostrar ambos valores
+            if currency not in ['RD$', 'DOP'] and itbis_orig is not None:
+                itbis_display = f"{currency} {float(itbis_orig):,.2f} / RD$ {itbis_rd:,.2f}"
+                total_display = f"{currency} {float(total_orig):,.2f} / RD$ {total_rd:,.2f}"
+            else:
+                itbis_display = f"RD$ {itbis_rd:,.2f}"
+                total_display = f"RD$ {total_rd:,.2f}"
+            
             data_em.append([
-                format_date_for_report(f.get('invoice_date')),  # ✅ CORREGIDO
+                format_date_for_report(f.get('invoice_date')),
                 f.get('invoice_number', ''),
-                f.get('third_party_name', '')[: 30],
-                f"{itbis:,.2f}",
-                f"{total:,.2f}"
+                f.get('third_party_name', '')[: 25],
+                itbis_display,
+                total_display
             ])
             
         draw_modern_table(
             "Últimas Facturas Emitidas",
-            ['Fecha', 'NCF', 'Cliente', 'ITBIS', 'Total (RD$)'],
+            ['Fecha', 'NCF', 'Cliente', 'ITBIS', 'Total'],
             data_em,
-            [15, 20, 35, 15, 15],
+            [12, 18, 25, 22, 23],
             COLORS['emerald_500']
         )
         
         pdf.ln(8)
         
-        # ✅ Datos Gastos - FECHA CORREGIDA
+        # ✅ Datos Gastos - ITBIS corregido sin doble multiplicación
         inv_expenses = _safe_list(report_data.get('expense_invoices', []))
         data_ex = []
         for f in inv_expenses:
-            rate = float(f.get('exchange_rate', 1.0) or 1.0)
-            itbis = float(f.get('itbis', 0.0)) * rate
-            total = float(f.get('total_amount_rd') or (float(f.get('total_amount', 0.0)) * rate))
+            # Obtener valores ya convertidos a RD$ (sin multiplicar nuevamente)
+            itbis_rd = float(f.get('itbis_rd') or f.get('itbis', 0.0) or 0.0)
+            total_rd = float(f.get('total_amount_rd') or f.get('total_amount', 0.0) or 0.0)
+            
+            # Obtener moneda y valores originales
+            currency = f.get('currency', 'RD$')
+            itbis_orig = f.get('itbis_original_currency')
+            total_orig = f.get('total_amount_original_currency')
+            
+            # Si hay moneda extranjera, mostrar ambos valores
+            if currency not in ['RD$', 'DOP'] and itbis_orig is not None:
+                itbis_display = f"{currency} {float(itbis_orig):,.2f} / RD$ {itbis_rd:,.2f}"
+                total_display = f"{currency} {float(total_orig):,.2f} / RD$ {total_rd:,.2f}"
+            else:
+                itbis_display = f"RD$ {itbis_rd:,.2f}"
+                total_display = f"RD$ {total_rd:,.2f}"
+            
             data_ex. append([
-                format_date_for_report(f.get('invoice_date')),  # ✅ CORREGIDO
+                format_date_for_report(f.get('invoice_date')),
                 f.get('invoice_number', ''),
-                f.get('third_party_name', '')[:30],
-                f"{itbis:,.2f}",
-                f"{total:,.2f}"
+                f.get('third_party_name', '')[:25],
+                itbis_display,
+                total_display
             ])
             
         draw_modern_table(
             "Gastos Registrados",
-            ['Fecha', 'NCF', 'Proveedor', 'ITBIS', 'Total (RD$)'],
+            ['Fecha', 'NCF', 'Proveedor', 'ITBIS', 'Total'],
             data_ex,
-            [15, 20, 35, 15, 15],
+            [12, 18, 25, 22, 23],
             COLORS['red_500']
         )
 
@@ -785,7 +811,8 @@ def generate_retention_pdf(save_path, company_name, period_str, results_data, se
 
 def generate_advanced_retention_pdf(save_path, company_name, period_str, summary_data, selected_invoices):
     """
-    Genera el reporte multi-moneda / impuestos avanzados.
+    Genera el reporte multi-moneda.
+    CORREGIDO: Coordenadas dinámicas para evitar solapamiento con header.
     """
     try:
         pdf = ModernPDF(orientation='L', company_name=company_name, report_title="Reporte Impuestos Multi-Moneda", report_period=period_str)
@@ -794,27 +821,29 @@ def generate_advanced_retention_pdf(save_path, company_name, period_str, summary
         full_w = pdf.w - 30
         
         # --- GLOBAL SUMMARY BAR ---
+        # Usamos coordenadas relativas para no pisar el header
+        start_y = pdf.get_y()
+        if start_y < 35: start_y = 35 # Seguridad extra
+        
+        bar_height = 22
         pdf.set_fill_color_rgb(COLORS['indigo_900'])
-        pdf.rounded_rect(15, pdf.get_y(), full_w, 20, 3, 'F')
+        pdf.rounded_rect(15, start_y, full_w, bar_height, 3, 'F')
         
         grand_total = summary_data.get('grand_total_rd', 0.0)
         
-        pdf.set_xy(20, 20)
+        # Texto dentro de la barra usando start_y
+        pdf.set_xy(20, start_y + 5)
         pdf.set_font('Arial', 'B', 8)
         pdf.set_text_color_rgb(COLORS['blue_50'])
         pdf.cell(100, 4, "IMPUESTO TOTAL ESTIMADO (GLOBAL)", 0, 1, 'L')
         
-        pdf.set_xy(20, 25)
+        pdf.set_xy(20, start_y + 11)
         pdf.set_font('Arial', 'B', 16)
         pdf.set_text_color_rgb(COLORS['white'])
         pdf.cell(100, 8, f"RD$ {grand_total:,.2f}", 0, 1, 'L')
         
-        pdf.set_xy(full_w - 60, 20)
-        pdf.set_font('Arial', '', 8)
-        pdf.set_text_color_rgb(COLORS['blue_50'])
-        pdf.cell(60, 4, f"Tasa USD Ref: 58.50", 0, 1, 'R')
-        
-        pdf.set_y(45)
+        # Mover el cursor debajo de la barra
+        pdf.set_y(start_y + bar_height + 10)
         
         # --- GROUP BY CURRENCY ---
         grouped = {}
@@ -829,21 +858,24 @@ def generate_advanced_retention_pdf(save_path, company_name, period_str, summary
             'RD$': {'name': 'Peso Dominicano', 'badge': COLORS['slate_50']}
         }
         
-        for curr, invoices in grouped. items():
+        for curr, invoices in grouped.items():
+            if pdf.get_y() > 160: 
+                pdf.add_page()
+                pdf.ln(5)
+
             meta = currency_map.get(curr, {'name': curr, 'badge': COLORS['slate_50']})
-            
             pdf.draw_badge(f"{curr} - {meta['name']}", 15, pdf.get_y(), meta['badge'], COLORS['slate_700'])
             
-            sub_imp = sum(x. get('total_imp_orig', 0) for x in invoices)
+            sub_imp = sum(x.get('total_imp_orig', 0) for x in invoices)
             pdf.set_xy(70, pdf.get_y())
             pdf.set_font('Arial', 'B', 9)
             pdf.set_text_color_rgb(COLORS['slate_600'])
-            pdf.cell(100, 5, f"Impuestos:  {sub_imp:,.2f} {curr}", 0, 1, 'L')
+            pdf.cell(100, 5, f"Impuestos: {sub_imp:,.2f} {curr}", 0, 1, 'L')
             
-            pdf.ln(2)
+            pdf.ln(8)
             
             headers = ["Fecha", "Factura / Empresa", "Tasa", f"Total ({curr})", f"Imp. ({curr})", "Imp. (RD$)"]
-            widths = [25, 100, 25, 35, 35, 40]
+            widths = [25, 90, 20, 35, 35, 40]
             
             pdf.set_fill_color_rgb(COLORS['slate_50'])
             pdf.set_text_color_rgb(COLORS['slate_500'])
@@ -863,15 +895,16 @@ def generate_advanced_retention_pdf(save_path, company_name, period_str, summary
             
             sub_imp_rd = 0.0
             
-            # ✅ Table Body - FECHA CORREGIDA
             for inv in invoices:
-                if pdf.get_y() > 180:  pdf.add_page()
+                if pdf.get_y() > 180:  
+                    pdf.add_page()
+                    pdf.ln(5)
                 
                 imp_rd = inv.get('total_imp_rd', 0.0)
                 sub_imp_rd += imp_rd
                 
                 vals = [
-                    format_date_for_report(inv.get('fecha') or inv.get('invoice_date')),  # ✅ CORREGIDO
+                    format_date_for_report(inv.get('fecha') or inv.get('invoice_date')),
                     f"{inv.get('no_fact','')} - {inv.get('empresa','')[:30]}",
                     f"{inv.get('exchange_rate',1):.2f}",
                     f"{inv.get('total_orig',0):,.2f}",
@@ -882,7 +915,7 @@ def generate_advanced_retention_pdf(save_path, company_name, period_str, summary
                 start_x = 15
                 for i, v in enumerate(vals):
                     align = 'R' if i >= 2 else 'L'
-                    pdf.set_xy(start_x, pdf. get_y())
+                    pdf.set_xy(start_x, pdf.get_y())
                     
                     if i == 5:
                         pdf.set_font('Arial', 'B', 8)
@@ -891,39 +924,44 @@ def generate_advanced_retention_pdf(save_path, company_name, period_str, summary
                         pdf.set_font('Arial', '', 8)
                     elif i == 4:
                         pdf.set_text_color_rgb(COLORS['red_600'])
-                        pdf. cell(widths[i], 6, v, 0, 0, align)
+                        pdf.cell(widths[i], 6, v, 0, 0, align)
                         pdf.set_text_color_rgb(COLORS['slate_600'])
                     else:
                         pdf.cell(widths[i], 6, v, 0, 0, align)
-                        
                     start_x += widths[i]
                 pdf.ln(6)
             
             pdf.ln(2)
-            pdf.set_x(full_w - 80)
+            pdf.set_x(full_w - 95) # Alineado a la derecha
             pdf.set_fill_color_rgb(COLORS['emerald_50'])
             pdf.set_text_color_rgb(COLORS['emerald_600'])
             pdf.set_font('Arial', 'B', 8)
-            pdf.rounded_rect(pdf.get_x(), pdf.get_y(), 95, 8, 2, 'F')
+            # Dibujar rect con coordenada actual
+            current_x = pdf.w - 15 - 95
+            pdf.rounded_rect(current_x, pdf.get_y(), 95, 8, 2, 'F')
+            pdf.set_x(current_x)
             pdf.cell(95, 8, f"Subtotal Convertido: RD$ {sub_imp_rd:,.2f}", 0, 1, 'C')
             
-            pdf.ln(10)
+            pdf.ln(12)
 
+        # Footer Gran Total
         if pdf.get_y() > 150:  pdf.add_page()
         
-        pdf.set_x(full_w/2)
+        box_width = full_w / 2
+        box_x = 15 + (full_w / 4)
+        
         pdf.set_fill_color_rgb(COLORS['slate_900'])
-        pdf.rounded_rect(pdf.w/2 + 15, pdf.get_y(), (full_w/2), 30, 3, 'F')
+        pdf.rounded_rect(box_x, pdf.get_y(), box_width, 30, 3, 'F')
         
         y_f = pdf.get_y()
-        pdf.set_xy(pdf.w/2 + 25, y_f + 5)
+        pdf.set_xy(box_x + 10, y_f + 5)
         pdf.set_text_color_rgb(COLORS['slate_400'])
-        pdf.cell(50, 5, "TOTAL A PAGAR (RD$)", 0, 1, 'L')
+        pdf.cell(box_width - 20, 5, "TOTAL A PAGAR (RD$)", 0, 1, 'C')
         
-        pdf.set_xy(pdf.w/2 + 25, y_f + 12)
+        pdf.set_xy(box_x + 10, y_f + 12)
         pdf.set_font('Arial', 'B', 20)
         pdf.set_text_color_rgb(COLORS['white'])
-        pdf.cell(50, 10, f"{grand_total:,.2f}", 0, 1, 'L')
+        pdf.cell(box_width - 20, 10, f"{grand_total:,.2f}", 0, 1, 'C')
 
         pdf.output(save_path)
         return True, "Reporte Multi-moneda Generado."
@@ -954,22 +992,12 @@ def generate_excel_report(report_data, save_path):
         return False, f"Error generando Excel: {e}"
 
 def generate_tax_calculation_pdf(report_data, output_path):
-    """
-    Wrapper para reporte avanzado usando la estructura de datos de Tax Calculation.
-    Transforma los datos y llama a generate_advanced_retention_pdf.
-    """
+    """Wrapper con CORRECCIÓN CRÍTICA DE MONEDA"""
     try:
         calc = report_data.get("calculation", {}) or {}
         invoices = report_data.get("invoices", []) or []
 
-        company_display = (
-            calc.get("company_name")
-            or calc.get("company_label")
-            or calc.get("company")
-            or calc.get("empresa")
-            or str(calc.get("company_id", ""))
-        )
-
+        company_display = calc.get("company_name") or str(calc.get("company_id", ""))
         period_str = f"{calc.get('start_date', '')} al {calc.get('end_date', '')}"
         percent_to_pay = float(calc.get("percent_to_pay", 0.0) or 0.0)
 
@@ -983,32 +1011,62 @@ def generate_tax_calculation_pdf(report_data, output_path):
 
             currency = inv.get("currency") or "RD$"
             rate = float(inv.get("exchange_rate", 1.0) or 1.0)
-            total_orig = float(inv.get("total_amount", 0.0) or 0.0)
-            itbis_orig = float(inv.get("itbis", 0.0) or 0.0)
-
-            valor_retencion_orig = itbis_orig * 0.30 if inv.get("has_retention") else 0.0
-            monto_a_pagar_orig = total_orig * (percent_to_pay / 100.0)
-            itbis_neto_orig = itbis_orig - valor_retencion_orig
+            
+            # --- CORRECCIÓN CRÍTICA DE MONEDA ---
+            # Problema: A veces 'itbis_original_currency' viene sucio con el valor en RD$
+            # Solución: Si el valor original es casi igual al valor en RD$ pero la moneda NO es RD$,
+            # asumimos que el valor original está mal y lo recalculamos.
+            
+            raw_itbis_orig = float(inv.get("itbis_original_currency", 0.0) or 0.0)
+            raw_total_orig = float(inv.get("total_amount_original_currency", 0.0) or 0.0)
+            
+            itbis_rd = float(inv.get("itbis_rd") or inv.get("itbis", 0.0) or 0.0)
+            total_rd = float(inv.get("total_amount_rd") or inv.get("total_amount", 0.0) or 0.0)
+            
+            # Validación de integridad para monedas extranjeras
+            if currency not in ["RD$", "DOP"] and rate > 1.0:
+                # Si el ITBIS original es sospechosamente cercano al ITBIS RD, recalcular
+                if abs(raw_itbis_orig - itbis_rd) < 1.0 and itbis_rd > 0:
+                    itbis_original = itbis_rd / rate
+                elif raw_itbis_orig == 0:
+                    itbis_original = itbis_rd / rate
+                else:
+                    itbis_original = raw_itbis_orig
+                    
+                # Misma validación para el total
+                if abs(raw_total_orig - total_rd) < 1.0 and total_rd > 0:
+                    total_original = total_rd / rate
+                elif raw_total_orig == 0:
+                    total_original = total_rd / rate
+                else:
+                    total_original = raw_total_orig
+            else:
+                # Si es RD$, los valores son directos
+                itbis_original = itbis_rd
+                total_original = total_rd
+            
+            # Cálculos finales usando los valores saneados
+            valor_retencion_orig = itbis_original * 0.30 if inv.get("has_retention") else 0.0
+            monto_a_pagar_orig = total_original * (percent_to_pay / 100.0)
+            itbis_neto_orig = itbis_original - valor_retencion_orig
             total_impuestos_row_orig = itbis_neto_orig + monto_a_pagar_orig
 
-            total_rd = float(inv.get("total_amount_rd", 0.0) or (total_orig * rate))
             total_imp_rd = total_impuestos_row_orig * rate
 
-            currency_totals. setdefault(currency, 0.0)
+            currency_totals.setdefault(currency, 0.0)
             currency_totals[currency] += total_impuestos_row_orig
             grand_total_rd += total_imp_rd
 
-            # ✅ FECHA CORREGIDA
             selected_invoices_data.append({
-                "fecha": format_date_for_report(inv.get("invoice_date")),  # ✅ CORREGIDO
-                "no_fact":  str(inv.get("invoice_number", "")),
+                "fecha": format_date_for_report(inv.get("invoice_date")),
+                "no_fact": str(inv.get("invoice_number", "")),
                 "empresa": str(inv.get("third_party_name", "")),
                 "currency": currency,
                 "exchange_rate": rate,
-                "total_orig": total_orig,
+                "total_orig": total_original,
                 "total_rd": total_rd,
                 "total_imp_orig": total_impuestos_row_orig,
-                "total_imp_rd":  total_imp_rd,
+                "total_imp_rd": total_imp_rd,
             })
 
         summary_data = {
@@ -1018,18 +1076,13 @@ def generate_tax_calculation_pdf(report_data, output_path):
             "company_name": company_display,
         }
 
-        return generate_advanced_retention_pdf(
-            output_path,
-            company_display,
-            period_str,
-            summary_data,
-            selected_invoices_data,
-        )
+        return generate_advanced_retention_pdf(output_path, company_display, period_str, summary_data, selected_invoices_data)
 
     except Exception as e:
         logger.exception("Error wrapper tax pdf")
         return False, str(e)
     
+        
 def generate_profit_report_pdf(report_data, output_path):
     """
     Genera el Reporte de Utilidades (Profit & Loss Statement).

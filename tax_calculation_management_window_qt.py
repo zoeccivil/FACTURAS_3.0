@@ -88,8 +88,8 @@ class TaxCalculationManagementWindowQt(QDialog):
         table_label.setStyleSheet("font-weight: 600; color: #4B5563; font-size: 13px;")
         list_layout.addWidget(table_label)
 
-        self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(["Nombre del Cálculo", "Fecha de Creación"])
+        self.table = QTableWidget(0, 3)  # ✅ Agregada columna "Estado"
+        self.table.setHorizontalHeaderLabels(["Nombre del Cálculo", "Fecha de Creación", "Estado"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -230,8 +230,59 @@ class TaxCalculationManagementWindowQt(QDialog):
             date_item = QTableWidgetItem(date_str)
             date_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
 
+            # ✅ NUEVO: Columna de estado "Pagado" / "Pendiente"
+            is_paid = bool(calc.get("is_paid", False))
+            status_item = QTableWidgetItem()
+            status_item.setFlags(
+                Qt.ItemFlag.ItemIsUserCheckable
+                | Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+            )
+            status_item.setCheckState(
+                Qt.CheckState.Checked if is_paid else Qt.CheckState.Unchecked
+            )
+            status_item.setText("✓ Pagado" if is_paid else "⧗ Pendiente")
+            status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
             self.table.setItem(row, 0, name_item)
             self.table.setItem(row, 1, date_item)
+            self.table.setItem(row, 2, status_item)
+        
+        # ✅ NUEVO: Conectar señal para detectar cambios en el checkbox
+        self.table.cellClicked.connect(self._on_cell_clicked)
+
+    def _on_cell_clicked(self, row, column):
+        """Maneja el click en las celdas, especialmente para la columna de estado."""
+        if column == 2:  # Columna "Estado"
+            status_item = self.table.item(row, 2)
+            if not status_item:
+                return
+            
+            # Obtener el ID del cálculo
+            name_item = self.table.item(row, 0)
+            if not name_item:
+                return
+            calc_id = name_item.data(Qt.ItemDataRole.UserRole)
+            
+            # Toggle el estado
+            new_state = status_item.checkState() == Qt.CheckState.Checked
+            
+            # Actualizar el texto visual
+            status_item.setText("✓ Pagado" if new_state else "⧗ Pendiente")
+            
+            # Actualizar en la base de datos
+            try:
+                if hasattr(self.controller, "update_tax_calculation_paid_status"):
+                    success, msg = self.controller.update_tax_calculation_paid_status(calc_id, new_state)
+                    if not success:
+                        QMessageBox.warning(self, "Error", f"No se pudo actualizar el estado: {msg}")
+                        # Revertir el cambio visual
+                        status_item.setCheckState(
+                            Qt.CheckState.Unchecked if new_state else Qt.CheckState.Checked
+                        )
+                        status_item.setText("⧗ Pendiente" if new_state else "✓ Pagado")
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Error al actualizar estado: {e}")
 
     def _format_date(self, value) -> str:
         if not value:

@@ -418,8 +418,18 @@ class LogicControllerFirebase:
             except Exception:
                 return 1.0
 
-        itbis_ingresos = sum(float(inv.get("itbis", 0.0)) * _fx(inv) for inv in emitted)
-        itbis_gastos = sum(float(inv.get("itbis", 0.0)) * _fx(inv) for inv in expenses)
+        # ✅ CORRECCIÓN: El ITBIS ya está en RD$ después de nuestra corrección
+        # Ya no necesitamos multiplicar por _fx(inv) porque el campo "itbis" 
+        # ahora siempre está en RD$ gracias al fix en add_invoice()
+        # Solo usamos itbis_rd si existe, sino fallback a itbis (que ya debería estar en RD$)
+        itbis_ingresos = sum(
+            float(inv.get("itbis_rd") or inv.get("itbis", 0.0) or 0.0) 
+            for inv in emitted
+        )
+        itbis_gastos = sum(
+            float(inv.get("itbis_rd") or inv.get("itbis", 0.0) or 0.0) 
+            for inv in expenses
+        )
 
         net_itbis = itbis_ingresos - itbis_gastos
 
@@ -497,16 +507,54 @@ class LogicControllerFirebase:
 
             rows: List[Dict[str, Any]] = []
             for inv in invoices_sorted:
+                # ✅ NUEVO: Incluir campos de moneda original
+                currency = inv.get("currency", "RD$")
+                exchange_rate = float(inv.get("exchange_rate", 1.0) or 1.0)
+                
+                # Obtener valores originales si existen
+                itbis_original = inv.get("itbis_original_currency")
+                total_original = inv.get("total_amount_original_currency")
+                
+                # Si no existen campos originales y la moneda no es RD$, calcular desde RD$
+                if itbis_original is None and currency not in ["RD$", "DOP", "RD", "DOP$"]:
+                    itbis_rd = float(inv.get("itbis_rd") or inv.get("itbis", 0.0) or 0.0)
+                    if exchange_rate > 0:
+                        itbis_original = itbis_rd / exchange_rate
+                    else:
+                        itbis_original = 0.0
+                elif itbis_original is None:
+                    # Para RD$, usar el valor en RD$
+                    itbis_original = float(inv.get("itbis_rd") or inv.get("itbis", 0.0) or 0.0)
+                else:
+                    itbis_original = float(itbis_original or 0.0)
+                
+                if total_original is None and currency not in ["RD$", "DOP", "RD", "DOP$"]:
+                    total_rd = float(inv.get("total_amount_rd") or inv.get("total_amount", 0.0) or 0.0)
+                    if exchange_rate > 0:
+                        total_original = total_rd / exchange_rate
+                    else:
+                        total_original = 0.0
+                elif total_original is None:
+                    # Para RD$, usar el valor en RD$
+                    total_original = float(inv.get("total_amount_rd") or inv.get("total_amount", 0.0) or 0.0)
+                else:
+                    total_original = float(total_original or 0.0)
+                
                 rows.append(
                     {
                         "date": _format_date_for_display(inv.get("invoice_date")),
                         "type": inv.get("invoice_type", ""),
                         "number": inv.get("invoice_number", ""),
                         "party": inv.get("third_party_name", ""),
+                        "currency": currency,
                         "itbis": float(inv.get("itbis", 0.0)),
+                        "itbis_original_currency": itbis_original,
+                        "itbis_rd": float(inv.get("itbis_rd") or inv.get("itbis", 0.0) or 0.0),
                         "total": float(
                             inv.get("total_amount_rd", inv.get("total_amount", 0.0))
                         ),
+                        "total_amount_original_currency": total_original,
+                        "total_amount_rd": float(inv.get("total_amount_rd") or inv.get("total_amount", 0.0) or 0.0),
                     }
                 )
             return rows
@@ -716,6 +764,24 @@ class LogicControllerFirebase:
             # total_amount_rd
             if "total_amount_rd" not in invoice_data:
                 invoice_data["total_amount_rd"] = total_rd
+
+            # ✅ NUEVO: Calcular ITBIS en RD$ (multiplicar por tasa de cambio)
+            try:
+                itbis_original = float(invoice_data.get("itbis", 0.0))
+                itbis_rd = itbis_original * rate
+                
+                # Guardar tanto el ITBIS original como el convertido
+                invoice_data["itbis_original_currency"] = itbis_original
+                invoice_data["itbis_rd"] = itbis_rd
+                invoice_data["itbis"] = itbis_rd  # El campo principal ahora es en RD$
+            except Exception as e:
+                print(f"[FIREBASE] WARN calculando ITBIS: {e}")
+                
+            # ✅ NUEVO: Guardar total original también
+            try:
+                invoice_data["total_amount_original_currency"] = total
+            except Exception:
+                pass
 
             # Normalizar fechas:  date -> datetime
             def _normalize_date_field(key: str):
@@ -3399,8 +3465,9 @@ class LogicControllerFirebase:
                     last_value = float(monthly_values_dict[month_str] or 0.0)
                 values.append(last_value)
             
-            # Calcular total del año (último valor = acumulado total)
-            total_year = values[-1] if values else 0.0
+            # ✅ CORREGIDO: Calcular total del año como el valor máximo acumulado
+            # (buscar el último mes con datos, no asumir diciembre)
+            total_year = max(values) if values else 0.0
             
             summary["concepts"].append({
                 "name": concept_name,
@@ -3413,9 +3480,239 @@ class LogicControllerFirebase:
             for i, val in enumerate(values):
                 summary["monthly_totals"][i] += val
         
-        summary["grand_total"] = summary["monthly_totals"][-1] if summary["monthly_totals"] else 0.0
+        # ✅ CORREGIDO: Gran total como máximo acumulado, no solo diciembre
+        summary["grand_total"] = max(summary["monthly_totals"]) if summary["monthly_totals"] else 0.0
         
         return summary
+
+    # ========================================================================
+    # GESTIÓN DE INGRESOS ADICIONALES (Paralelo a gastos, pero SUMA en lugar de restar)
+    # ========================================================================
+
+    def get_annual_income_concepts(
+        self, company_id: int, year: int
+    ) -> list[dict]:
+        """
+        Obtiene todos los conceptos de ingresos adicionales del año especificado.
+        Similar a get_annual_expense_concepts pero para ingresos.
+        """
+        if not self._db or not company_id:
+            return []
+
+        try:
+            concepts_ref = (
+                self._db.collection("companies")
+                .document(str(company_id))
+                .collection("annual_additional_income")
+            )
+            
+            docs = concepts_ref.stream()
+            result = []
+            for doc in docs:
+                data = doc.to_dict()
+                data["id"] = doc.id
+                result.append(data)
+            
+            return result
+        except Exception as e:
+            print(f"Error al obtener conceptos de ingresos: {e}")
+            return []
+
+    def create_annual_income_concept(
+        self,
+        company_id: int,
+        year: int,
+        month_str: str,
+        name: str,
+        category: str = "",
+        description: str = "",
+        initial_value: float = 0.0,
+    ):
+        """
+        Crea un nuevo concepto de ingreso adicional.
+        Similar a create_annual_expense_concept.
+        """
+        if not self._db or not company_id:
+            raise Exception("Base de datos no disponible")
+
+        concepts_ref = (
+            self._db.collection("companies")
+            .document(str(company_id))
+            .collection("annual_additional_income")
+        )
+
+        # Calcular valor acumulado
+        current_month_int = int(month_str)
+        months_data = {}
+        accumulated_value = 0.0
+        
+        for m in range(1, 13):
+            m_str = f"{m:02d}"
+            if m <= current_month_int:
+                accumulated_value += initial_value
+            months_data[m_str] = accumulated_value
+
+        doc_data = {
+            "name": name,
+            "category": category,
+            "description": description,
+            "months": {str(year): months_data}
+        }
+
+        concepts_ref.add(doc_data)
+
+    def update_annual_income_value(
+        self,
+        company_id: int,
+        year: int,
+        month_str: str,
+        concept_id: str,
+        new_value: float,
+    ):
+        """
+        Actualiza el valor de un ingreso adicional para un mes específico (acumulativo).
+        Similar a update_annual_expense_value.
+        """
+        if not self._db or not company_id:
+            raise Exception("Base de datos no disponible")
+
+        concept_ref = (
+            self._db.collection("companies")
+            .document(str(company_id))
+            .collection("annual_additional_income")
+            .document(concept_id)
+        )
+
+        doc = concept_ref.get()
+        if not doc.exists:
+            raise Exception("Concepto no encontrado")
+
+        data = doc.to_dict()
+        months_data = data.get("months", {}).get(str(year), {})
+
+        # Recalcular acumulados
+        current_month_int = int(month_str)
+        prev_accumulated = 0.0
+        
+        if current_month_int > 1:
+            prev_month_str = f"{current_month_int - 1:02d}"
+            prev_accumulated = months_data.get(prev_month_str, 0.0)
+
+        # Nuevo valor acumulado
+        new_accumulated = prev_accumulated + new_value
+
+        # Actualizar meses desde el actual hacia adelante
+        for m in range(current_month_int, 13):
+            m_str = f"{m:02d}"
+            if m == current_month_int:
+                months_data[m_str] = new_accumulated
+            else:
+                # Propagar diferencia
+                old_val = months_data.get(m_str, 0.0)
+                if old_val > 0:
+                    old_base = months_data.get(f"{current_month_int - 1:02d}", 0.0) if current_month_int > 1 else 0.0
+                    diff = old_val - old_base
+                    months_data[m_str] = new_accumulated + diff
+                else:
+                    months_data[m_str] = new_accumulated
+
+        # Guardar
+        if "months" not in data:
+            data["months"] = {}
+        data["months"][str(year)] = months_data
+
+        concept_ref.set(data)
+
+    def delete_annual_income_concept(self, company_id: int, concept_id: str):
+        """
+        Elimina un concepto de ingreso adicional.
+        """
+        if not self._db or not company_id:
+            raise Exception("Base de datos no disponible")
+
+        concept_ref = (
+            self._db.collection("companies")
+            .document(str(company_id))
+            .collection("annual_additional_income")
+            .document(concept_id)
+        )
+
+        concept_ref.delete()
+
+    def get_annual_income_summary(
+        self, company_id: int, year: int
+    ) -> dict:
+        """
+        Obtiene resumen de ingresos adicionales por mes (12 meses + gran total).
+        Similar a get_annual_expense_summary.
+        """
+        if not self._db or not company_id:
+            return {
+                "concepts": [],
+                "monthly_totals": [0.0] * 12,
+                "grand_total": 0.0
+            }
+
+        concepts = self.get_annual_income_concepts(company_id, year)
+        
+        summary = {
+            "concepts": [],
+            "monthly_totals": [0.0] * 12,
+            "grand_total": 0.0
+        }
+
+        for concept in concepts:
+            name = concept.get("name", "")
+            monthly_values = concept.get("months", {}).get(str(year), {})
+            
+            values = []
+            for m in range(1, 13):
+                m_str = f"{m:02d}"
+                val = float(monthly_values.get(m_str, 0.0) or 0.0)
+                values.append(val)
+            
+            # Total año: máximo acumulado (no diciembre que podría ser 0)
+            total_year = max(values) if values else 0.0
+            
+            summary["concepts"].append({
+                "name": name,
+                "category": concept.get("category", ""),
+                "values": values,
+                "total_year": total_year
+            })
+            
+            # Sumar a totales mensuales
+            for i, val in enumerate(values):
+                summary["monthly_totals"][i] += val
+        
+        # Gran total como máximo acumulado
+        summary["grand_total"] = max(summary["monthly_totals"]) if summary["monthly_totals"] else 0.0
+        
+        return summary
+
+    def get_income_value_for_month(
+        self, company_id: int, year: int, month_str: str
+    ) -> float:
+        """
+        Obtiene el total de ingresos adicionales para un mes específico.
+        Similar a get_expense_value_for_month.
+        """
+        if not self._db or not company_id:
+            return 0.0
+
+        try:
+            concepts = self.get_annual_income_concepts(company_id, year)
+            total = 0.0
+            
+            for concept in concepts:
+                monthly_values = concept.get("months", {}).get(str(year), {})
+                value = float(monthly_values.get(month_str, 0.0) or 0.0)
+                total += value
+            
+            return total
+        except Exception as e:
+            print(f"Error al obtener ingresos del mes: {e}")
+            return 0.0
 
     # ========================================================================
     # COMPATIBILIDAD CON SISTEMA ANTERIOR (get_profit_summary)
@@ -3477,8 +3774,19 @@ class LogicControllerFirebase:
             elif tipo == "gasto":
                 total_expense += total_rd
         
-        print(f"[PROFIT_SUMMARY] Ingresos: RD$ {total_income:,.2f}")
+        print(f"[PROFIT_SUMMARY] Ingresos facturas: RD$ {total_income:,.2f}")
         print(f"[PROFIT_SUMMARY] Gastos facturas: RD$ {total_expense:,.2f}")
+
+        # ✅ NUEVO: Obtener ingresos adicionales acumulativos
+        additional_income = 0.0
+        if year_int and month_str:
+            additional_income = self.get_income_value_for_month(
+                company_id=company_id,
+                year=year_int,
+                month_str=month_str
+            )
+        
+        print(f"[PROFIT_SUMMARY] Ingresos adicionales acumulativos: RD$ {additional_income:,.2f}")
 
         # ✅ NUEVO: Obtener gastos acumulativos en lugar de gastos simples
         additional_expenses = 0.0
@@ -3491,7 +3799,8 @@ class LogicControllerFirebase:
         
         print(f"[PROFIT_SUMMARY] Gastos adicionales acumulativos: RD$ {additional_expenses:,.2f}")
 
-        net_profit = total_income - total_expense - additional_expenses
+        # ✅ NUEVA FÓRMULA: (Ingresos Facturados + Ingresos Adicionales) - (Gastos Facturados + Gastos Adicionales)
+        net_profit = (total_income + additional_income) - (total_expense + additional_expenses)
         
         print(f"[PROFIT_SUMMARY] Utilidad neta: RD$ {net_profit:,.2f}")
         print(f"[PROFIT_SUMMARY] ===== FIN =====")
@@ -3499,6 +3808,7 @@ class LogicControllerFirebase:
         return {
             "total_income": total_income,
             "total_expense": total_expense,
+            "additional_income": additional_income,  # ✅ NUEVO
             "additional_expenses": additional_expenses,
             "net_profit": net_profit,
         }
@@ -4914,3 +5224,410 @@ class LogicControllerFirebase:
             import traceback
             traceback. print_exc()
             return []
+
+    def reverse_journal_entry(
+        self,
+        entry_id: str,
+        reversal_date,
+        reason: str
+    ) -> tuple[bool, str]:
+        """
+        Anula un asiento contable creando un asiento inverso.
+        
+        Args:
+            entry_id: ID del asiento a anular
+            reversal_date: Fecha del asiento de anulación
+            reason: Motivo de la anulación
+            
+        Returns:
+            (success, message) tuple
+        """
+        if not self._db:
+            return False, "Base de datos no inicializada."
+
+        try:
+            from google.cloud.firestore_v1.base_query import FieldFilter
+            
+            # Buscar el asiento original
+            query = self._db.collection("journal_entries").where(
+                filter=FieldFilter("entry_id", "==", entry_id)
+            ).limit(1)
+            
+            docs = list(query.stream())
+            if not docs:
+                return False, f"Asiento {entry_id} no encontrado."
+            
+            original_entry = docs[0].to_dict()
+            
+            # Verificar que no esté ya anulado
+            if original_entry.get("reversed_by"):
+                return False, f"El asiento {entry_id} ya fue anulado."
+            
+            # Crear líneas inversas (intercambiar débito y crédito)
+            reversed_lines = []
+            for line in original_entry.get("lines", []):
+                reversed_lines.append({
+                    "account_id": line["account_id"],
+                    "account_name": line["account_name"],
+                    "debit": line["credit"],  # Invertir
+                    "credit": line["debit"],   # Invertir
+                    "description": f"Anulación: {line.get('description', '')}"
+                })
+            
+            # Crear asiento de anulación
+            success, msg = self.create_journal_entry(
+                company_id=original_entry["company_id"],
+                entry_date=reversal_date,
+                reference=f"REV-{original_entry.get('reference', '')}",
+                description=f"ANULACIÓN: {reason}",
+                lines=reversed_lines,
+                source_type="REVERSAL",
+                source_id=entry_id
+            )
+            
+            if not success:
+                return False, f"Error al crear asiento de anulación: {msg}"
+            
+            # Marcar el asiento original como anulado
+            docs[0].reference.update({
+                "reversed_by": reason,
+                "reversal_date": reversal_date,
+                "status": "REVERSED"
+            })
+            
+            return True, f"Asiento {entry_id} anulado correctamente."
+
+        except Exception as e:
+            print(f"[REVERSE_ENTRY] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return False, f"Error al anular asiento: {e}"
+
+    def get_general_ledger(
+        self,
+        company_id,
+        account_id: str,
+        start_date,
+        end_date
+    ) -> list[dict]:
+        """
+        Obtiene el libro mayor (movimientos) de una cuenta específica.
+        
+        Args:
+            company_id: ID de la empresa
+            account_id: Código de la cuenta (ej: "1.1.1.001")
+            start_date: Fecha inicial
+            end_date: Fecha final
+            
+        Returns:
+            Lista de movimientos con débito, crédito y saldo
+        """
+        if not self._db:
+            return []
+
+        try:
+            from google.cloud.firestore_v1.base_query import FieldFilter
+            
+            normalized_id = self._normalize_company_id(company_id)
+            
+            # Convertir fechas a datetime
+            if isinstance(start_date, str):
+                start_date = datetime.datetime.strptime(start_date, "%Y-%m-%d")
+            elif isinstance(start_date, datetime.date) and not isinstance(start_date, datetime.datetime):
+                start_date = datetime.datetime.combine(start_date, datetime.time())
+            
+            if isinstance(end_date, str):
+                end_date = datetime.datetime.strptime(end_date, "%Y-%m-%d")
+            elif isinstance(end_date, datetime.date) and not isinstance(end_date, datetime.datetime):
+                end_date = datetime.datetime.combine(end_date, datetime.time(23, 59, 59))
+            
+            # Obtener asientos en el rango de fechas
+            query = (
+                self._db.collection("journal_entries")
+                .where(filter=FieldFilter("company_id", "==", normalized_id))
+                .where(filter=FieldFilter("entry_date", ">=", start_date))
+                .where(filter=FieldFilter("entry_date", "<=", end_date))
+                .order_by("entry_date")
+            )
+            
+            docs = query.stream()
+            
+            # Filtrar líneas que correspondan a esta cuenta
+            movements = []
+            for doc in docs:
+                entry_data = doc.to_dict()
+                
+                # Buscar líneas de esta cuenta
+                for line in entry_data.get("lines", []):
+                    if line.get("account_id") == account_id:
+                        movements.append({
+                            "date": entry_data["entry_date"],
+                            "entry_id": entry_data["entry_id"],
+                            "reference": entry_data.get("reference", ""),
+                            "description": line.get("description", entry_data.get("description", "")),
+                            "debit": line.get("debit", 0.0),
+                            "credit": line.get("credit", 0.0),
+                            "status": entry_data.get("status", ""),
+                        })
+            
+            print(f"[GENERAL_LEDGER] {len(movements)} movimientos para cuenta {account_id}")
+            
+            return movements
+
+        except Exception as e:
+            print(f"[GENERAL_LEDGER] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+    def calculate_income_statement(
+        self,
+        company_id,
+        year: int,
+        month: int
+    ) -> dict:
+        """
+        Calcula el Estado de Resultados (P&L) para un periodo.
+        
+        Returns:
+            {
+                'ingresos_operacionales': float,
+                'costo_ventas': float,
+                'utilidad_bruta': float,
+                'gastos_operacionales': float,
+                'gastos_financieros': float,
+                'otros_ingresos': float,
+                'otros_gastos': float,
+                'utilidad_neta': float
+            }
+        """
+        if not self._db:
+            return {}
+
+        try:
+            from google.cloud.firestore_v1.base_query import FieldFilter
+            
+            normalized_id = self._normalize_company_id(company_id)
+            
+            # Obtener saldos del periodo
+            period = f"{year}-{month:02d}"
+            query = (
+                self._db.collection("account_balances")
+                .where(filter=FieldFilter("company_id", "==", normalized_id))
+                .where(filter=FieldFilter("period", "==", period))
+            )
+            
+            docs = query.stream()
+            
+            # Obtener plan de cuentas para clasificar
+            accounts = self.get_chart_of_accounts(company_id)
+            accounts_dict = {acc["account_code"]: acc for acc in accounts}
+            
+            # Inicializar totales
+            ingresos_operacionales = 0.0
+            costo_ventas = 0.0
+            gastos_operacionales = 0.0
+            gastos_financieros = 0.0
+            otros_ingresos = 0.0
+            otros_gastos = 0.0
+            
+            # Sumar saldos por categoría
+            for doc in docs:
+                balance_data = doc.to_dict()
+                account_id = balance_data.get("account_id", "")
+                
+                # Obtener info de la cuenta
+                account = accounts_dict.get(account_id, {})
+                account_type = account.get("account_type", "")
+                category = account.get("category", "")
+                
+                # Calcular movimiento neto del periodo
+                total_debit = balance_data.get("total_debit", 0.0)
+                total_credit = balance_data.get("total_credit", 0.0)
+                net_movement = total_credit - total_debit  # Para cuentas de ingreso
+                
+                if account_type == "INGRESO":
+                    category_upper = category.upper()
+                    if "OPERACIONAL" in category_upper or "VENTA" in category_upper or "SERVICIO" in category_upper:
+                        ingresos_operacionales += net_movement
+                    else:
+                        otros_ingresos += net_movement
+                
+                elif account_type == "GASTO":
+                    net_movement_gasto = total_debit - total_credit  # Para gastos
+                    category_upper = category.upper()
+                    
+                    if "COSTO" in category_upper or "VENTA" in category_upper:
+                        costo_ventas += net_movement_gasto
+                    elif "FINANCIERO" in category_upper or "INTERES" in category_upper:
+                        gastos_financieros += net_movement_gasto
+                    elif "OPERACIONAL" in category_upper or "ADMINISTRATIVO" in category_upper:
+                        gastos_operacionales += net_movement_gasto
+                    else:
+                        otros_gastos += net_movement_gasto
+            
+            # Calcular utilidades
+            utilidad_bruta = ingresos_operacionales - costo_ventas
+            utilidad_operacional = utilidad_bruta - gastos_operacionales
+            utilidad_antes_impuestos = utilidad_operacional - gastos_financieros + otros_ingresos - otros_gastos
+            utilidad_neta = utilidad_antes_impuestos  # Sin impuestos por ahora
+            
+            result = {
+                'ingresos_operacionales': round(ingresos_operacionales, 2),
+                'costo_ventas': round(costo_ventas, 2),
+                'utilidad_bruta': round(utilidad_bruta, 2),
+                'gastos_operacionales': round(gastos_operacionales, 2),
+                'gastos_financieros': round(gastos_financieros, 2),
+                'otros_ingresos': round(otros_ingresos, 2),
+                'otros_gastos': round(otros_gastos, 2),
+                'utilidad_operacional': round(utilidad_operacional, 2),
+                'utilidad_antes_impuestos': round(utilidad_antes_impuestos, 2),
+                'utilidad_neta': round(utilidad_neta, 2)
+            }
+            
+            print(f"[INCOME_STATEMENT] Calculado para {period}: Utilidad Neta = {utilidad_neta:,.2f}")
+            
+            return result
+
+        except Exception as e:
+            print(f"[INCOME_STATEMENT] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return {}
+
+    def get_balance_sheet_for_optimizer(
+        self,
+        company_id,
+        year: int,
+        month: int
+    ) -> dict:
+        """
+        Exporta balance contable al optimizador financiero.
+        
+        Returns:
+            {
+                'has_real_data': bool,
+                'current_assets': float,
+                'non_current_assets': float,
+                'current_liabilities': float,
+                'non_current_liabilities': float,
+                'equity': float,
+                'revenue': float,
+                'cogs': float,
+                'operating_expenses': float,
+                'financial_expenses': float,
+                'net_income': float,
+                'ebit': float,
+                'cash': float,
+                'accounts_receivable': float,
+                'inventory': float,
+                'accounts_payable': float
+            }
+        """
+        if not self._db:
+            return {'has_real_data': False}
+
+        try:
+            from google.cloud.firestore_v1.base_query import FieldFilter
+            
+            normalized_id = self._normalize_company_id(company_id)
+            
+            # Obtener saldos del periodo
+            period = f"{year}-{month:02d}"
+            query = (
+                self._db.collection("account_balances")
+                .where(filter=FieldFilter("company_id", "==", normalized_id))
+                .where(filter=FieldFilter("period", "==", period))
+            )
+            
+            docs = list(query.stream())
+            
+            if not docs:
+                return {'has_real_data': False}
+            
+            # Obtener plan de cuentas
+            accounts = self.get_chart_of_accounts(company_id)
+            accounts_dict = {acc["account_code"]: acc for acc in accounts}
+            
+            # Inicializar categorías
+            current_assets = 0.0
+            non_current_assets = 0.0
+            current_liabilities = 0.0
+            non_current_liabilities = 0.0
+            equity = 0.0
+            cash = 0.0
+            accounts_receivable = 0.0
+            inventory = 0.0
+            accounts_payable = 0.0
+            
+            # Clasificar saldos
+            for doc in docs:
+                balance_data = doc.to_dict()
+                account_id = balance_data.get("account_id", "")
+                closing_balance = balance_data.get("closing_balance", 0.0)
+                
+                account = accounts_dict.get(account_id, {})
+                account_type = account.get("account_type", "")
+                category = account.get("category", "").upper()
+                
+                if account_type == "ACTIVO":
+                    # Consistent approach: check for substring or exact match
+                    if "CORRIENTE" in category or category in ["EFECTIVO", "CUENTAS_COBRAR", "INVENTARIO"]:
+                        current_assets += closing_balance
+                        
+                        # Detalles
+                        if category == "EFECTIVO":
+                            cash += closing_balance
+                        elif category == "CUENTAS_COBRAR":
+                            accounts_receivable += closing_balance
+                        elif category == "INVENTARIO":
+                            inventory += closing_balance
+                    else:
+                        non_current_assets += closing_balance
+                
+                elif account_type == "PASIVO":
+                    # Consistent approach: check for substring or exact match
+                    if "CORRIENTE" in category or category == "CUENTAS_PAGAR":
+                        current_liabilities += abs(closing_balance)
+                        
+                        if category == "CUENTAS_PAGAR":
+                            accounts_payable += abs(closing_balance)
+                    else:
+                        non_current_liabilities += abs(closing_balance)
+                
+                elif account_type == "PATRIMONIO":
+                    equity += abs(closing_balance)
+            
+            # Obtener datos del estado de resultados
+            income_statement = self.calculate_income_statement(company_id, year, month)
+            
+            result = {
+                'has_real_data': True,
+                'current_assets': round(current_assets, 2),
+                'non_current_assets': round(non_current_assets, 2),
+                'current_liabilities': round(current_liabilities, 2),
+                'non_current_liabilities': round(non_current_liabilities, 2),
+                'equity': round(equity, 2),
+                'revenue': income_statement.get('ingresos_operacionales', 0.0),
+                'cogs': income_statement.get('costo_ventas', 0.0),
+                'operating_expenses': income_statement.get('gastos_operacionales', 0.0),
+                'financial_expenses': income_statement.get('gastos_financieros', 0.0),
+                'net_income': income_statement.get('utilidad_neta', 0.0),
+                'ebit': income_statement.get('utilidad_operacional', 0.0),
+                'cash': round(cash, 2),
+                'accounts_receivable': round(accounts_receivable, 2),
+                'inventory': round(inventory, 2),
+                'accounts_payable': round(accounts_payable, 2),
+                'total_assets': round(current_assets + non_current_assets, 2),
+                'total_liabilities': round(current_liabilities + non_current_liabilities, 2),
+            }
+            
+            print(f"[BALANCE_SHEET_OPTIMIZER] Datos exportados para {period}")
+            
+            return result
+
+        except Exception as e:
+            print(f"[BALANCE_SHEET_OPTIMIZER] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'has_real_data': False}
